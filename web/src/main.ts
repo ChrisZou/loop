@@ -392,6 +392,8 @@ function legacyCopy(text: string): boolean {
   return success
 }
 async function copyFeedback(): Promise<void> {
+  const hasGeneral = Boolean(session.general.trim())
+  if (!session.comments.length && !hasGeneral) { toast('还没有批注'); return }
   const text = formatFeedback(session.comments, session.general)
   let copied = false
   try {
@@ -400,7 +402,7 @@ async function copyFeedback(): Promise<void> {
   if (!copied) copied = legacyCopy(text)
   if (copied) {
     if (exportDialog.open) exportDialog.close()
-    toast(`已复制 ${session.comments.length} 条反馈`)
+    toast(`已复制 ${session.comments.length} 条批注${hasGeneral ? '（含总体意见）' : ''}`)
     get('#copy-hint').hidden = true
   }
   else showPreview(true)
