@@ -36,6 +36,17 @@ enum CommentRanges {
         return newEnd > newStart ? NSRange(location: newStart, length: newEnd - newStart) : nil
     }
 
+    /// The last visible character of a range, which carries the inline comment marker.
+    static func markerRange(of range: NSRange, in text: String) -> NSRange? {
+        guard valid(range, in: text) else { return nil }
+        let source = text as NSString
+        var index = NSMaxRange(range) - 1
+        while index > range.location,
+              let scalar = UnicodeScalar(source.character(at: index)),
+              CharacterSet.whitespacesAndNewlines.contains(scalar) { index -= 1 }
+        return source.rangeOfComposedCharacterSequence(at: index)
+    }
+
     static func valid(_ range: NSRange, in text: String) -> Bool {
         let count = (text as NSString).length
         return range.location >= 0 && range.location != NSNotFound && range.length > 0

@@ -2,6 +2,9 @@ import AppKit
 
 enum MarkdownStyler {
     static let bodyFont = NSFont.systemFont(ofSize: 15)
+    static let accent = NSColor(srgbRed: 0.24, green: 0.38, blue: 0.68, alpha: 1)
+    /// Space reserved after a commented range's last character for each inline marker.
+    static let markerAdvance: CGFloat = 19
     static var paragraph: NSParagraphStyle {
         let style = NSMutableParagraphStyle()
         style.lineSpacing = 6
@@ -48,7 +51,17 @@ enum MarkdownStyler {
                                  value: NSColor.systemYellow.withAlphaComponent(active ? 0.48 : 0.22),
                                  range: comment.range)
         }
+        // Kerning makes room for markers without inserting characters, so ranges stay valid.
+        for (marker, count) in markerCounts(comments, in: text) {
+            storage.addAttribute(.kern, value: markerAdvance * CGFloat(count), range: marker)
+        }
         storage.endEditing()
+    }
+
+    static func markerCounts(_ comments: [Comment], in text: String) -> [NSRange: Int] {
+        comments.reduce(into: [:]) { counts, comment in
+            if let marker = CommentRanges.markerRange(of: comment.range, in: text) { counts[marker, default: 0] += 1 }
+        }
     }
 
     private static func matches(_ pattern: String, text: String, apply: (NSTextCheckingResult) -> Void) {

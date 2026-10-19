@@ -9,27 +9,36 @@ final class SessionStore: ObservableObject {
     @Published var activeID: UUID?
     @Published var draft: Comment?
     @Published var draftBody = ""
-    @Published var editorFocus = UUID()
     @Published var navigationRequest: UUID?
     @Published var preview = false
     @Published var confirmNew = false
+    @Published var confirmSubmit = false
     @Published var toast: String?
     @Published var persistenceError: String?
     let demo: Bool
+    let review: ReviewRequest?
+    private(set) var submitted = false
     private var saveWork: DispatchWorkItem?
     private var toastWork: DispatchWorkItem?
     private let writer = DispatchQueue(label: "com.chris.loop.session")
     private let sessionURL: URL
 
-    init(session: Session? = nil) {
+    init(session: Session? = nil, review: ReviewRequest? = nil) {
         let env = ProcessInfo.processInfo.environment
-        demo = session != nil || env["LOOP_DEMO"] == "1"
-        sessionURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        self.review = review
+        demo = review == nil && (session != nil || env["LOOP_DEMO"] == "1")
+        sessionURL = review?.draftURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Loop/session.json")
         var restored = Session()
         var loadError: String?
         if let session {
             restored = session
+        } else if let review {
+            restored.text = review.text
+            if let data = try? Data(contentsOf: sessionURL),
+               let draft = try? JSONDecoder().decode(Session.self, from: data), draft.text == review.text {
+                restored = draft
+            }
         } else if demo {
             restored = Demo.session
         } else if FileManager.default.fileExists(atPath: sessionURL.path) {
@@ -57,6 +66,9 @@ final class SessionStore: ObservableObject {
     }
     var hasContent: Bool { !text.isEmpty || !comments.isEmpty || !general.isEmpty || draft != nil }
     var exported: String { FeedbackExporter.export(text: text, comments: comments, general: general) }
+    var hasFeedback: Bool { !comments.isEmpty || !general.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    /// What the reviewing agent receives; submitting with no feedback means the plan is approved.
+    var submission: String { hasFeedback ? exported : ReviewRequest.approval }
 
     func addComment() {
         guard canAdd else { return }
@@ -64,14 +76,12 @@ final class SessionStore: ObservableObject {
                         quote: (text as NSString).substring(with: selection), body: "")
         draftBody = ""
         activeID = draft?.id
-        editorFocus = UUID()
     }
 
     func edit(_ comment: Comment) {
         draft = comment
         draftBody = comment.body
         activeID = comment.id
-        editorFocus = UUID()
     }
 
     func saveDraft() {
@@ -97,12 +107,6 @@ final class SessionStore: ObservableObject {
         comments.removeAll { $0.id == id }
         if draft?.id == id { cancelDraft() }
         if activeID == id { activeID = nil }
-    }
-
-    func navigate(to comment: Comment) {
-        activeID = comment.id
-        selection = comment.range
-        navigationRequest = UUID()
     }
 
     func willReplace(_ range: NSRange, with replacement: String) {
@@ -138,7 +142,10 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    func requestNew() { if hasContent { confirmNew = true } else { clear() } }
+    func requestNew() {
+        guard review == nil else { return }
+        if hasContent { confirmNew = true } else { clear() }
+    }
     func clear() {
         cancelDraft()
         activeID = nil
@@ -156,12 +163,37 @@ final class SessionStore: ObservableObject {
     func copyFeedback(to pasteboard: NSPasteboard) {
         let hasGeneral = !general.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if comments.isEmpty && !hasGeneral {
-            toast = "还没有批注"
+            show("还没有批注")
         } else {
             pasteboard.clearContents()
             pasteboard.setString(exported, forType: .string)
-            toast = "已复制 \(comments.count) 条批注到剪贴板" + (hasGeneral ? "（含总体意见）" : "")
+            show("已复制 \(comments.count) 条批注到剪贴板" + (hasGeneral ? "（含总体意见）" : ""))
         }
+    }
+
+    /// Keeps a comment that is still being typed, then asks before approving a plan without feedback.
+    func requestSubmit() {
+        guard review != nil else { return }
+        if draft != nil {
+            if draftBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { cancelDraft() } else { saveDraft() }
+        }
+        if hasFeedback { submit() } else { confirmSubmit = true }
+    }
+
+    func submit() {
+        guard let review, !submitted else { return }
+        do { try review.deliver(submission) } catch {
+            persistenceError = "提交失败：\(error.localizedDescription)"
+            return
+        }
+        submitted = true
+        saveWork?.cancel()
+        try? FileManager.default.removeItem(at: sessionURL)
+        NSApp.terminate(nil)
+    }
+
+    private func show(_ message: String) {
+        toast = message
         toastWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.toast = nil }
         toastWork = work
@@ -170,7 +202,7 @@ final class SessionStore: ObservableObject {
 
     private var snapshot: Session { Session(text: text, comments: comments, general: general) }
     private func scheduleSave() {
-        guard !demo else { return }
+        guard !demo, !submitted else { return }
         saveWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.saveNow() }
         saveWork = work
@@ -178,7 +210,7 @@ final class SessionStore: ObservableObject {
     }
 
     func saveNow() {
-        guard !demo else { return }
+        guard !demo, !submitted else { return }
         saveWork?.cancel()
         let session = snapshot
         let url = sessionURL

@@ -96,6 +96,45 @@ enum SelfTest {
         store.copyFeedback(to: pasteboard)
         check(store.toast == "已复制 0 条批注到剪贴板（含总体意见）"
               && pasteboard.string(forType: .string) == store.exported, "general-only feedback can be copied")
+
+        // Inline markers sit on the last visible character and never change the text.
+        let markerText = "保留重点  \n下一段😀"
+        check(CommentRanges.markerRange(of: NSRange(location: 0, length: 7), in: markerText) == NSRange(location: 3, length: 1),
+              "marker skips trailing whitespace")
+        let emoji = (markerText as NSString).range(of: "😀")
+        check(CommentRanges.markerRange(of: NSRange(location: 8, length: NSMaxRange(emoji) - 8), in: markerText) == emoji,
+              "marker covers a whole emoji")
+        let sameEnd = [Comment(location: 0, length: 4, quote: "", body: "a"), Comment(location: 2, length: 2, quote: "", body: "b")]
+        check(MarkdownStyler.markerCounts(sameEnd, in: markerText) == [NSRange(location: 3, length: 1): 2],
+              "comments ending together share one kerned marker slot")
+
+        // Review mode: the agent gets the export, or an explicit approval when there is nothing to say.
+        let reviewStore = SessionStore(session: Session(text: text))
+        check(!reviewStore.hasFeedback && reviewStore.submission == ReviewRequest.approval, "empty review submits approval")
+        reviewStore.general = "范围再收一收"
+        check(reviewStore.submission == reviewStore.exported, "general-only review submits the export")
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("loop-selftest-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let plan = folder.appendingPathComponent("方案.md")
+            let out = folder.appendingPathComponent("feedback.txt")
+            try text.write(to: plan, atomically: true, encoding: .utf8)
+            let request = try ReviewRequest.parse(["Loop", "--review", plan.path, "--out", out.path])
+            check(request?.text == text && request?.output == out.standardizedFileURL && request?.title == "方案.md",
+                  "parse review arguments")
+            let normal = try ReviewRequest.parse(["Loop"])
+            check(normal == nil, "no review flag means normal mode")
+            check((try? ReviewRequest.parse(["Loop", "--review"])) == nil, "missing review path is rejected")
+            check((try? ReviewRequest.parse(["Loop", "--review", folder.appendingPathComponent("无").path])) == nil,
+                  "unreadable plan is rejected")
+            let again = try ReviewRequest.parse(["Loop", "--review", plan.path])
+            check(request?.draftURL == again?.draftURL, "draft key depends only on plan text")
+            try request?.deliver("反馈")
+            let delivered = try String(contentsOf: out, encoding: .utf8)
+            check(delivered == "反馈\n", "deliver writes feedback file")
+        } catch { check(false, "review request: \(error)") }
+
         print(output)
         print("\nSELFTEST PASSED (\(checks) checks)")
     }

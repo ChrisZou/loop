@@ -1,0 +1,36 @@
+#!/bin/bash
+# loop review <plan.md|->: open a plan in Loop, wait for the user to submit, print the feedback.
+# Exit 0 with feedback on stdout after 提交; exit 1 if the window is closed without submitting.
+set -euo pipefail
+
+here="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+app="$here/../build/Loop.app"
+
+usage() {
+    echo "用法: loop review <方案文件>    （传 - 则从标准输入读取）" >&2
+    exit 64
+}
+[[ $# -eq 2 && "$1" == review ]] || usage
+[[ -d "$app" ]] || { echo "loop: 找不到 $app，请先运行 mac/build-app.sh" >&2; exit 69; }
+
+work="$(mktemp -d "${TMPDIR:-/tmp}/loop-review.XXXXXX")"
+trap 'rm -rf "$work"' EXIT
+
+if [[ "$2" == - ]]; then
+    plan="$work/方案.md"
+    cat > "$plan"
+else
+    plan="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
+fi
+[[ -r "$plan" && -s "$plan" ]] || { echo "loop: 无法读取方案或方案为空：$2" >&2; exit 66; }
+
+# Launch through LaunchServices so the window comes to the front; -n allows several reviews at once.
+out="$work/feedback.txt"
+open -n -W "$app" --args --review "$plan" --out "$out"
+
+if [[ -s "$out" ]]; then
+    cat "$out"
+else
+    echo "loop: 未提交（Loop 窗口已关闭）" >&2
+    exit 1
+fi

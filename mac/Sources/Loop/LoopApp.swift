@@ -12,13 +12,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func applicationWillTerminate(_ notification: Notification) { store?.saveNow() }
+    func applicationWillTerminate(_ notification: Notification) {
+        store?.saveNow()
+        // Closing a review without submitting must not look like an approval to the waiting agent.
+        if let store, store.review != nil, !store.submitted {
+            FileHandle.standardError.write(Data("Loop：未提交，批注已暂存，再次打开同一方案会恢复\n".utf8))
+            exit(1)
+        }
+    }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }
 
 struct LoopApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    @StateObject private var store = SessionStore()
+    @StateObject private var store = SessionStore(review: ReviewRequest.current)
 
     var body: some Scene {
         Window("Loop", id: "main") {
@@ -37,11 +44,16 @@ struct LoopApp: App {
                 .keyboardShortcut(.return, modifiers: .command)
                 .disabled(store.draft == nil ? !store.canAdd : store.draftBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Divider()
+                if store.review != nil {
+                    Button("提交", action: store.requestSubmit)
+                        .keyboardShortcut(.return, modifiers: [.command, .shift])
+                }
                 Button("导出反馈", action: store.copyFeedback)
                     .keyboardShortcut("c", modifiers: [.command, .shift])
                 Button("预览导出") { store.preview = true }
                 Divider()
                 Button("新建", action: store.requestNew).keyboardShortcut("n", modifiers: .command)
+                    .disabled(store.review != nil)
             }
         }
     }
@@ -53,6 +65,10 @@ enum LoopMain {
         if CommandLine.arguments.contains("--selftest") {
             SelfTest.run()
             return
+        }
+        do { ReviewRequest.current = try ReviewRequest.parse(CommandLine.arguments) } catch {
+            FileHandle.standardError.write(Data("Loop：\(error.localizedDescription)\n".utf8))
+            exit(64)
         }
         LoopApp.main()
     }
