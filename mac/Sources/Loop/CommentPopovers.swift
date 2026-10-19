@@ -45,11 +45,18 @@ struct CommentEditorPopover: View {
             QuoteLine(quote: store.draft?.quote ?? "")
             TextEditor(text: $store.draftBody)
                 .font(.system(size: 14))
+                .lineSpacing(3)
                 .scrollContentBackground(.hidden)
-                .padding(5)
-                .frame(height: 96)
-                .background(.background, in: RoundedRectangle(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.accentColor.opacity(0.35)))
+                .padding(6)
+                .frame(height: 100)
+                .overlay(alignment: .topLeading) {
+                    if store.draftBody.isEmpty {
+                        Text("写下你的意见…").font(.system(size: 14)).foregroundStyle(.tertiary)
+                            .padding(.leading, 11).padding(.top, 6).allowsHitTesting(false)
+                    }
+                }
+                .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor.opacity(0.35)))
                 .focused($focused)
                 .accessibilityLabel("批注意见")
                 .onExitCommand(perform: store.cancelDraft)
@@ -61,14 +68,16 @@ struct CommentEditorPopover: View {
                 }
                 Spacer()
                 Button("取消", action: store.cancelDraft).buttonStyle(.plain).foregroundStyle(.secondary)
-                Button("保存", action: store.saveDraft)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(empty)
-                    .help("保存（⌘↩）")
+                Button { store.saveDraft() } label: {
+                    HStack(spacing: 4) { Text("保存"); Text("⌘↩").font(.caption).opacity(0.7) }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(empty)
+                .help("保存（⌘↩）")
             }
         }
-        .padding(14)
-        .frame(width: 320)
+        .padding(16)
+        .frame(width: 340)
         .tint(Color(nsColor: MarkdownStyler.accent))
         .onAppear { DispatchQueue.main.async { focused = true } }
     }

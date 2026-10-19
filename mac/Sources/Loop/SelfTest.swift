@@ -97,6 +97,13 @@ enum SelfTest {
         check(store.toast == "已复制 0 条批注到剪贴板（含总体意见）"
               && pasteboard.string(forType: .string) == store.exported, "general-only feedback can be copied")
 
+        let trailing = Comment(location: 0, length: 4, quote: "", body: "意见")
+        check(!FeedbackExporter.export(text: "第一行\n", comments: [trailing], general: "").contains("   > \n"),
+              "selection past a line end leaves no empty quote line")
+        check(CommentRanges.trimmed(NSRange(location: 0, length: 6), in: " 第一行\n\n") == NSRange(location: 1, length: 3),
+              "new comments trim surrounding whitespace")
+        check(CommentRanges.trimmed(NSRange(location: 0, length: 2), in: " \n第") == nil, "whitespace-only selection cannot be commented")
+
         // Inline markers sit on the last visible character and never change the text.
         let markerText = "保留重点  \n下一段😀"
         check(CommentRanges.markerRange(of: NSRange(location: 0, length: 7), in: markerText) == NSRange(location: 3, length: 1),
@@ -107,6 +114,8 @@ enum SelfTest {
         let sameEnd = [Comment(location: 0, length: 4, quote: "", body: "a"), Comment(location: 2, length: 2, quote: "", body: "b")]
         check(MarkdownStyler.markerCounts(sameEnd, in: markerText) == [NSRange(location: 3, length: 1): 2],
               "comments ending together share one kerned marker slot")
+        check(CommentRanges.markerRange(of: NSRange(location: 0, length: 6), in: "**粗体**", hidden: IndexSet([0, 1, 4, 5]))
+              == NSRange(location: 3, length: 1), "marker skips hidden markdown syntax")
 
         // Review mode: the agent gets the export, or an explicit approval when there is nothing to say.
         let reviewStore = SessionStore(session: Session(text: text))

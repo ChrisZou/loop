@@ -11,7 +11,11 @@ enum FeedbackExporter {
         for (index, comment) in sorted.enumerated() {
             let quote = CommentRanges.valid(comment.range, in: text)
                 ? source.substring(with: comment.range) : comment.quote
-            let quoted = lines(quote).map { "   > " + $0 }.joined(separator: "\n")
+            var quoteLines = lines(quote)
+            // A selection that ran past a line end must not leave an empty quote line.
+            while quoteLines.count > 1, quoteLines.last?.trimmingCharacters(in: .whitespaces).isEmpty == true { quoteLines.removeLast() }
+            while quoteLines.count > 1, quoteLines.first?.trimmingCharacters(in: .whitespaces).isEmpty == true { quoteLines.removeFirst() }
+            let quoted = quoteLines.map { "   > " + $0 }.joined(separator: "\n")
             let body = lines(comment.body).joined(separator: "\n   ")
             sections.append("\(index + 1). 原文：\n\(quoted)\n   意见：\(body)")
         }

@@ -24,13 +24,40 @@ final class PlanTextView: NSTextView {
         super.didChangeText()
         needsDisplay = true
     }
+
+    /// Code cards and quote bars, drawn beneath highlights and text.
+    override func drawBackground(in rect: NSRect) {
+        super.drawBackground(in: rect)
+        guard let storage = textStorage, let manager = layoutManager, let container = textContainer else { return }
+        let origin = textContainerOrigin
+        storage.enumerateAttribute(.loopBlock, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard let kind = (value as? String).flatMap(MarkdownStyler.Block.init) else { return }
+            var used = NSRect.null
+            let glyphs = manager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            manager.enumerateLineFragments(forGlyphRange: glyphs) { _, usedRect, _, _, _ in used = used.union(usedRect) }
+            guard !used.isNull else { return }
+            let block = NSRect(x: origin.x, y: used.minY + origin.y, width: container.size.width, height: used.height)
+            guard block.intersects(rect) else { return }
+            switch kind {
+            case .code:
+                NSColor.labelColor.withAlphaComponent(0.045).setFill()
+                NSBezierPath(roundedRect: block, xRadius: 8, yRadius: 8).fill()
+            case .quote:
+                MarkdownStyler.accent.withAlphaComponent(0.35).setFill()
+                NSBezierPath(roundedRect: NSRect(x: block.minX + 2, y: block.minY + 2, width: 3, height: block.height - 4),
+                             xRadius: 1.5, yRadius: 1.5).fill()
+            }
+        }
+    }
 }
 
-/// Inline icon after a commented range's last character; hover previews the comment, click edits it.
+/// Numbered badge after a commented range's last character; hover previews the comment, click edits it.
+/// The number matches the item's position in the exported feedback.
 final class CommentMarker: NSView {
-    static let size: CGFloat = 16
+    static let size: CGFloat = 17
     let id: UUID
     var active = false { didSet { if active != oldValue { needsDisplay = true } } }
+    var number = 0 { didSet { if number != oldValue { needsDisplay = true } } }
     var onHover: ((CommentMarker, Bool) -> Void)?
     var onPress: ((CommentMarker) -> Void)?
 
@@ -53,15 +80,16 @@ final class CommentMarker: NSView {
     override func accessibilityPerformPress() -> Bool { onPress?(self); return true }
 
     override func draw(_ dirtyRect: NSRect) {
-        let color = active ? MarkdownStyler.accent : MarkdownStyler.accent.withAlphaComponent(0.7)
-        let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
-            .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
-        guard let image = NSImage(systemSymbolName: "text.bubble.fill", accessibilityDescription: nil)?
-            .withSymbolConfiguration(config) else { return }
-        let size = image.size
-        image.draw(in: NSRect(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2,
-                              width: size.width, height: size.height),
-                   from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        let badge = NSBezierPath(ovalIn: bounds.insetBy(dx: 0.5, dy: 0.5))
+        (active ? MarkdownStyler.accent : MarkdownStyler.accent.withAlphaComponent(0.78)).setFill()
+        badge.fill()
+        let label = "\(number)" as NSString
+        var font = NSFont.systemFont(ofSize: number >= 10 ? 8.5 : 10.5, weight: .bold)
+        if let rounded = font.fontDescriptor.withDesign(.rounded) { font = NSFont(descriptor: rounded, size: font.pointSize) ?? font }
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
+        let size = label.size(withAttributes: attributes)
+        label.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2),
+                   withAttributes: attributes)
     }
 }
 
@@ -69,6 +97,7 @@ final class EditorContainer: NSView {
     let scrollView = NSScrollView()
     let textView: PlanTextView
     let addButton = NSButton(title: "批注", target: nil, action: nil)
+    private let markupDelegate = MarkupLayoutDelegate()
     var onAdd: (() -> Void)?
     var onLayout: (() -> Void)?
     var canAdd = false
@@ -83,6 +112,7 @@ final class EditorContainer: NSView {
         manager.addTextContainer(container)
         textView = PlanTextView(frame: .zero, textContainer: container)
         super.init(frame: frameRect)
+        manager.delegate = markupDelegate
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = true
@@ -103,7 +133,7 @@ final class EditorContainer: NSView {
         textView.minSize = .zero
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.autoresizingMask = [.width]
-        textView.textContainerInset = NSSize(width: 32, height: 30)
+        textView.textContainerInset = NSSize(width: 40, height: 44)
         textView.font = MarkdownStyler.bodyFont
         textView.typingAttributes = MarkdownStyler.base
         textView.backgroundColor = .textBackgroundColor
@@ -118,9 +148,10 @@ final class EditorContainer: NSView {
             scrollView.topAnchor.constraint(equalTo: topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
-        addButton.bezelStyle = .rounded
-        addButton.controlSize = .small
-        addButton.image = NSImage(systemSymbolName: "text.bubble", accessibilityDescription: nil)
+        addButton.bezelStyle = .push
+        addButton.bezelColor = MarkdownStyler.accent
+        addButton.controlSize = .regular
+        addButton.image = NSImage(systemSymbolName: "text.bubble.fill", accessibilityDescription: nil)
         addButton.imagePosition = .imageLeading
         addButton.toolTip = "添加批注（⌘↩）"
         addButton.target = self
@@ -147,6 +178,11 @@ final class EditorContainer: NSView {
 
     override func layout() {
         super.layout()
+        // Center a fixed reading column; wide windows get margins instead of long lines.
+        let inset = max(40, floor((scrollView.contentSize.width - MarkdownStyler.columnWidth) / 2))
+        if textView.textContainerInset.width != inset {
+            textView.textContainerInset = NSSize(width: inset, height: textView.textContainerInset.height)
+        }
         // Keep enough drawable space for the multiline placeholder in an empty document.
         textView.minSize = NSSize(width: 0, height: scrollView.contentSize.height)
         if textView.frame.height < scrollView.contentSize.height {
@@ -157,16 +193,17 @@ final class EditorContainer: NSView {
         onLayout?()
     }
 
-    /// The last visible character of a range, in text view coordinates.
-    func markerRect(for range: NSRange) -> NSRect? {
-        guard let marker = CommentRanges.markerRange(of: range, in: textView.string),
+    /// The last visible character of a range and its baseline, in text view coordinates.
+    func markerPlacement(for range: NSRange, hidden: IndexSet) -> (rect: NSRect, baseline: CGFloat)? {
+        guard let marker = CommentRanges.markerRange(of: range, in: textView.string, hidden: hidden),
               let manager = textView.layoutManager, let container = textView.textContainer else { return nil }
         let glyphs = manager.glyphRange(forCharacterRange: marker, actualCharacterRange: nil)
         guard glyphs.length > 0 else { return nil }
-        var rect = manager.boundingRect(forGlyphRange: glyphs, in: container)
-        rect.origin.x += textView.textContainerOrigin.x
-        rect.origin.y += textView.textContainerOrigin.y
-        return rect
+        let origin = textView.textContainerOrigin
+        let rect = manager.boundingRect(forGlyphRange: glyphs, in: container).offsetBy(dx: origin.x, dy: origin.y)
+        let last = NSMaxRange(glyphs) - 1
+        let line = manager.lineFragmentRect(forGlyphAt: last, effectiveRange: nil)
+        return (rect, origin.y + line.minY + manager.location(forGlyphAt: last).y)
     }
 
     func positionButton() {
@@ -183,10 +220,17 @@ final class EditorContainer: NSView {
         rect.origin.y += textView.textContainerOrigin.y
         guard textView.visibleRect.intersects(rect) else { addButton.isHidden = true; return }
         let anchor = convert(rect, from: textView)
-        let width = max(76, addButton.frame.width)
-        addButton.frame = NSRect(
-            x: max(8, min(bounds.width - width - 18, anchor.maxX + 8)),
-            y: max(8, min(bounds.height - 32, anchor.minY - 30)), width: width, height: 28)
+        let width = max(80, addButton.frame.width)
+        let height: CGFloat = 28
+        // Prefer the right margin beside the selection's last line, where it never covers text.
+        let columnRight = convert(NSPoint(x: textView.textContainerOrigin.x + container.size.width, y: 0), from: textView).x
+        if bounds.width - columnRight >= width + 36 {
+            addButton.frame = NSRect(x: columnRight + 20, y: max(8, min(bounds.height - height - 4, anchor.midY - height / 2)),
+                                     width: width, height: height)
+        } else {
+            addButton.frame = NSRect(x: max(8, min(bounds.width - width - 18, anchor.maxX + 8)),
+                                     y: max(8, min(bounds.height - height - 4, anchor.minY - height - 4)), width: width, height: height)
+        }
         addButton.isHidden = false
     }
 }
@@ -240,6 +284,7 @@ struct DocumentEditor: NSViewRepresentable {
         private var lastComments: [Comment] = []
         private var lastActive: UUID?
         private var lastDraft: Comment?
+        private var hidden = IndexSet()
         private var markers: [UUID: CommentMarker] = [:]
         private var editorPopoverID: UUID?
         private let previewPopover: NSPopover = {
@@ -260,24 +305,25 @@ struct DocumentEditor: NSViewRepresentable {
         func layoutMarkers() {
             guard let container, let storage = container.textView.textStorage else { return }
             let text = container.textView.string
-            let counts = MarkdownStyler.markerCounts(store.comments, in: text)
+            let counts = MarkdownStyler.markerCounts(store.comments, in: text, hidden: hidden)
             var slots: [NSRange: Int] = [:]
             var placed = Set<UUID>()
-            for comment in store.sortedComments {
-                guard let marker = CommentRanges.markerRange(of: comment.range, in: text),
-                      let rect = container.markerRect(for: comment.range) else { continue }
+            for (index, comment) in store.sortedComments.enumerated() {
+                guard let marker = CommentRanges.markerRange(of: comment.range, in: text, hidden: hidden),
+                      let (rect, baseline) = container.markerPlacement(for: comment.range, hidden: hidden) else { continue }
                 let slot = slots[marker, default: 0]
                 slots[marker] = slot + 1
                 // The glyph's advance includes the kerning reserved for its markers.
                 let reserved = MarkdownStyler.markerAdvance * CGFloat(counts[marker] ?? 1)
                 let font = storage.attribute(.font, at: marker.location, effectiveRange: nil) as? NSFont ?? MarkdownStyler.bodyFont
-                let baseline = rect.minY + font.ascender + (font.leading > 0 ? font.leading : 0)
                 let view = markers[comment.id] ?? makeMarker(comment.id, in: container.textView)
+                // Centered on the middle of CJK glyphs, which sit higher than Latin x-height.
                 view.frame = NSRect(x: rect.maxX - reserved + 2 + CGFloat(slot) * MarkdownStyler.markerAdvance,
-                                    y: baseline - font.capHeight / 2 - CommentMarker.size / 2,
+                                    y: baseline - font.pointSize * 0.36 - CommentMarker.size / 2,
                                     width: CommentMarker.size, height: CommentMarker.size).integral
+                view.number = index + 1
                 view.active = store.activeID == comment.id
-                view.setAccessibilityLabel("批注：\(comment.body)")
+                view.setAccessibilityLabel("第 \(index + 1) 条批注：\(comment.body)")
                 placed.insert(comment.id)
             }
             for (id, marker) in markers where !placed.contains(id) {
@@ -332,7 +378,7 @@ struct DocumentEditor: NSViewRepresentable {
             if let marker = markers[draft.id] {
                 editorPopoverID = draft.id
                 editorPopover.show(relativeTo: marker.frame, of: container.textView, preferredEdge: .maxY)
-            } else if let rect = container.markerRect(for: draft.range) {
+            } else if let (rect, _) = container.markerPlacement(for: draft.range, hidden: hidden) {
                 editorPopoverID = draft.id
                 editorPopover.show(relativeTo: rect, of: container.textView, preferredEdge: .maxY)
             }
@@ -372,7 +418,9 @@ struct DocumentEditor: NSViewRepresentable {
             lastActive = store.activeID
             lastDraft = store.draft
             let selections = view.selectedRanges
-            MarkdownStyler.apply(to: storage, comments: store.comments, activeID: store.activeID, draft: store.draft)
+            // Reviewing reads like a document; pasting and editing keep the markdown visible.
+            hidden = MarkdownStyler.apply(to: storage, comments: store.comments, activeID: store.activeID,
+                                          draft: store.draft, hideMarkup: store.review != nil)
             view.selectedRanges = selections
             view.typingAttributes = MarkdownStyler.base
         }

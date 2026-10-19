@@ -61,8 +61,8 @@ final class SessionStore: ObservableObject {
 
     var sortedComments: [Comment] { comments.sorted { $0.location < $1.location } }
     var canAdd: Bool {
-        draft == nil && CommentRanges.valid(selection, in: text)
-            && !comments.contains { $0.range == selection }
+        guard draft == nil, let range = CommentRanges.trimmed(selection, in: text) else { return false }
+        return !comments.contains { $0.range == range }
     }
     var hasContent: Bool { !text.isEmpty || !comments.isEmpty || !general.isEmpty || draft != nil }
     var exported: String { FeedbackExporter.export(text: text, comments: comments, general: general) }
@@ -71,9 +71,9 @@ final class SessionStore: ObservableObject {
     var submission: String { hasFeedback ? exported : ReviewRequest.approval }
 
     func addComment() {
-        guard canAdd else { return }
-        draft = Comment(location: selection.location, length: selection.length,
-                        quote: (text as NSString).substring(with: selection), body: "")
+        guard canAdd, let range = CommentRanges.trimmed(selection, in: text) else { return }
+        draft = Comment(location: range.location, length: range.length,
+                        quote: (text as NSString).substring(with: range), body: "")
         draftBody = ""
         activeID = draft?.id
     }

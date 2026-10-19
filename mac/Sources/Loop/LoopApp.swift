@@ -33,7 +33,7 @@ struct LoopApp: App {
                 .tint(Color(red: 0.24, green: 0.38, blue: 0.68))
                 .onAppear { delegate.store = store }
         }
-        .defaultSize(width: 1200, height: 800)
+        .defaultSize(width: 1080, height: 800)
         .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(replacing: .newItem) {}

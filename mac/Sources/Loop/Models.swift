@@ -37,14 +37,27 @@ enum CommentRanges {
     }
 
     /// The last visible character of a range, which carries the inline comment marker.
-    static func markerRange(of range: NSRange, in text: String) -> NSRange? {
+    static func markerRange(of range: NSRange, in text: String, hidden: IndexSet = IndexSet()) -> NSRange? {
         guard valid(range, in: text) else { return nil }
         let source = text as NSString
         var index = NSMaxRange(range) - 1
-        while index > range.location,
-              let scalar = UnicodeScalar(source.character(at: index)),
-              CharacterSet.whitespacesAndNewlines.contains(scalar) { index -= 1 }
+        while index > range.location, hidden.contains(index) || isSpace(source.character(at: index)) { index -= 1 }
         return source.rangeOfComposedCharacterSequence(at: index)
+    }
+
+    /// A selection without leading or trailing whitespace, so highlights and quotes hug the words.
+    static func trimmed(_ range: NSRange, in text: String) -> NSRange? {
+        guard valid(range, in: text) else { return nil }
+        let source = text as NSString
+        var start = range.location
+        var end = NSMaxRange(range)
+        while start < end, isSpace(source.character(at: start)) { start += 1 }
+        while end > start, isSpace(source.character(at: end - 1)) { end -= 1 }
+        return end > start ? NSRange(location: start, length: end - start) : nil
+    }
+
+    private static func isSpace(_ unit: unichar) -> Bool {
+        UnicodeScalar(unit).map(CharacterSet.whitespacesAndNewlines.contains) ?? false
     }
 
     static func valid(_ range: NSRange, in text: String) -> Bool {
