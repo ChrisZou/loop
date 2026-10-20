@@ -117,6 +117,41 @@ enum SelfTest {
         check(CommentRanges.markerRange(of: NSRange(location: 0, length: 6), in: "**粗体**", hidden: IndexSet([0, 1, 4, 5]))
               == NSRange(location: 3, length: 1), "marker skips hidden markdown syntax")
 
+        // Hover previews, driven through the editor's own hit testing in an offscreen window.
+        _ = NSApplication.shared
+        let hoverText = "前言部分，被批注的原文，结尾"
+        let outer = Comment(location: 5, length: 6, quote: "", body: "外层")
+        let inner = Comment(location: 8, length: 3, quote: "", body: "内层")
+        let hoverStore = SessionStore(session: Session(text: hoverText, comments: [outer, inner]))
+        let editor = EditorContainer(frame: NSRect(x: 0, y: 0, width: 900, height: 400))
+        let window = NSWindow(contentRect: editor.frame, styleMask: [.titled], backing: .buffered, defer: true)
+        window.contentView = editor
+        let coordinator = DocumentEditor.Coordinator(hoverStore)
+        coordinator.container = editor
+        editor.textView.string = hoverText
+        coordinator.styleIfNeeded()
+        editor.layoutSubtreeIfNeeded()
+        coordinator.layoutMarkers()
+        func center(of index: Int) -> NSPoint {
+            guard let manager = editor.textView.layoutManager, let container = editor.textView.textContainer else { return .zero }
+            let glyphs = manager.glyphRange(forCharacterRange: NSRange(location: index, length: 1), actualCharacterRange: nil)
+            let rect = manager.boundingRect(forGlyphRange: glyphs, in: container)
+            let origin = editor.textView.textContainerOrigin
+            return NSPoint(x: rect.midX + origin.x, y: rect.midY + origin.y)
+        }
+        coordinator.hoverText(at: center(of: 6))
+        check(hoverStore.activeID == outer.id, "hovering highlighted text previews its comment")
+        coordinator.hoverText(at: center(of: 9))
+        check(hoverStore.activeID == inner.id, "nested highlights preview the innermost comment")
+        coordinator.hoverText(at: center(of: 1))
+        check(hoverStore.activeID == nil, "plain text closes the preview")
+        coordinator.hoverText(at: center(of: 9))
+        coordinator.hoverText(at: NSPoint(x: center(of: 13).x + 200, y: center(of: 13).y))
+        check(hoverStore.activeID == nil, "blank space after the line closes the preview")
+        coordinator.hoverText(at: center(of: 6))
+        coordinator.endHover()
+        check(hoverStore.activeID == nil, "scrolling closes the preview")
+
         // Review mode: the agent gets the export, or an explicit approval when there is nothing to say.
         let reviewStore = SessionStore(session: Session(text: text))
         check(!reviewStore.hasFeedback && reviewStore.submission == ReviewRequest.approval, "empty review submits approval")

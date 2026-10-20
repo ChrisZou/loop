@@ -12,7 +12,7 @@ struct ContentView: View {
         }
         .frame(minWidth: 600, minHeight: 440)
         .navigationTitle(store.review.map { "审阅 · \($0.title)" } ?? "Loop")
-        .navigationSubtitle(store.review == nil ? "" : "提交后反馈直接回传给 AI")
+        .navigationSubtitle(subtitle)
         .toolbar {
             if store.review == nil {
                 ToolbarItem(placement: .navigation) {
@@ -20,7 +20,7 @@ struct ContentView: View {
                         .help("新建（⌘N）")
                 }
             }
-            // The primary action (提交 / 复制反馈) lives in the bottom bar next to the general opinion.
+            // 提交 sends the whole review — every comment plus the general opinion — so it sits with the window's actions.
             ToolbarItemGroup(placement: .primaryAction) {
                 Button(action: store.addComment) { Label("批注", systemImage: "text.bubble") }
                     .labelStyle(.titleAndIcon)
@@ -28,6 +28,17 @@ struct ContentView: View {
                     .help("添加批注（⌘↩）")
                 Button { store.preview = true } label: { Label("预览", systemImage: "eye") }
                     .help(store.review == nil ? "预览导出内容" : "预览提交内容")
+                if store.review != nil {
+                    Button(action: store.requestSubmit) { Label("提交", systemImage: "paperplane.fill") }
+                        .labelStyle(.titleAndIcon)
+                        .buttonStyle(.borderedProminent)
+                        .help("把全部批注和总体意见提交给 AI（⇧⌘↩）")
+                } else {
+                    Button(action: store.copyFeedback) { Label("复制反馈", systemImage: "doc.on.doc") }
+                        .labelStyle(.titleAndIcon)
+                        .buttonStyle(.borderedProminent)
+                        .help("复制结构化反馈（⇧⌘C）")
+                }
             }
         }
         .overlay(alignment: .bottom) {
@@ -37,7 +48,7 @@ struct ContentView: View {
                     .padding(.horizontal, 18).padding(.vertical, 12)
                     .background(.regularMaterial, in: Capsule())
                     .shadow(color: .black.opacity(0.1), radius: 12, y: 4)
-                    .padding(.bottom, 84)
+                    .padding(.bottom, 76)
                     .allowsHitTesting(false)
                     .accessibilityAddTraits(.updatesFrequently)
             }
@@ -54,60 +65,38 @@ struct ContentView: View {
             Text("AI 会收到：\(ReviewRequest.approval)")
         }
     }
+
+    private var subtitle: String {
+        let count = store.comments.isEmpty ? "选中文字即可批注" : "\(store.comments.count) 条批注"
+        return store.review == nil ? count : "\(count) · 提交后直接回传给 AI"
+    }
 }
 
-/// General opinion, comment count and the primary action sit under the document, like a message composer.
+/// The general opinion, written once the whole plan has been read.
 private struct FeedbackBar: View {
     @ObservedObject var store: SessionStore
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .bottom, spacing: 14) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Image(systemName: "text.alignleft").foregroundStyle(.tertiary)
-                    TextField("总体意见（可选）", text: $store.general, axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 14))
-                        .lineLimit(1...5)
-                        .accessibilityLabel("总体意见")
-                }
-                .padding(.horizontal, 12).padding(.vertical, 10)
-                .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.primary.opacity(0.08)))
-                Group {
-                    if store.comments.isEmpty {
-                        Text("选中文字，按 ⌘↩ 批注").foregroundStyle(.tertiary)
-                    } else {
-                        Text("\(store.comments.count) 条批注").monospacedDigit().foregroundStyle(.secondary)
-                    }
-                }
-                .font(.callout)
-                .padding(.bottom, 10)
-                .fixedSize()
-                primaryButton
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "text.alignleft").foregroundStyle(.tertiary)
+                TextField("总体意见（可选）", text: $store.general, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 14))
+                    .lineLimit(1...5)
+                    .accessibilityLabel("总体意见")
             }
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.primary.opacity(0.08)))
             if let error = store.persistenceError {
                 Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
             }
         }
-        .frame(maxWidth: MarkdownStyler.columnWidth + 120)
+        .frame(maxWidth: MarkdownStyler.columnWidth)
         .frame(maxWidth: .infinity)
-        .padding(.horizontal, 24).padding(.vertical, 14)
+        .padding(.horizontal, 24).padding(.vertical, 12)
         .background(.bar)
-    }
-
-    @ViewBuilder private var primaryButton: some View {
-        if store.review != nil {
-            Button(action: store.requestSubmit) { Label("提交", systemImage: "paperplane.fill").padding(.horizontal, 4) }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .help("提交给 AI（⇧⌘↩）")
-        } else {
-            Button(action: store.copyFeedback) { Label("复制反馈", systemImage: "doc.on.doc").padding(.horizontal, 4) }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .help("复制结构化反馈（⇧⌘C）")
-        }
     }
 }
 

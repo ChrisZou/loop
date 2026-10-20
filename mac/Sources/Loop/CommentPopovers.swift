@@ -14,7 +14,7 @@ private struct QuoteLine: View {
     }
 }
 
-/// Shown while hovering an inline marker.
+/// Shown while hovering an inline marker or its highlighted text.
 struct CommentPreview: View {
     let comment: Comment
     var body: some View {
@@ -24,7 +24,7 @@ struct CommentPreview: View {
                 .font(.system(size: 14)).lineSpacing(4)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("点击图标编辑").font(.caption).foregroundStyle(.tertiary)
+            Text("点击序号圆标编辑").font(.caption).foregroundStyle(.tertiary)
         }
         .padding(14)
         .frame(width: 300)

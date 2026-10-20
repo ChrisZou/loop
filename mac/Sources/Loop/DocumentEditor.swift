@@ -2,7 +2,28 @@ import SwiftUI
 import AppKit
 
 final class PlanTextView: NSTextView {
+    /// Mouse position in view coordinates while over the text, nil once it leaves.
+    var onHover: ((NSPoint?) -> Void)?
+    private var hoverArea: NSTrackingArea?
+
     override func paste(_ sender: Any?) { pasteAsPlainText(sender) }
+
+    func trackHover() {
+        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverArea = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        onHover?(convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        if event.trackingArea === hoverArea { onHover?(nil) }
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
@@ -64,7 +85,7 @@ final class CommentMarker: NSView {
     init(id: UUID) {
         self.id = id
         super.init(frame: NSRect(x: 0, y: 0, width: Self.size, height: Self.size))
-        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
                                        owner: self, userInfo: nil))
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
@@ -100,7 +121,9 @@ final class EditorContainer: NSView {
     private let markupDelegate = MarkupLayoutDelegate()
     var onAdd: (() -> Void)?
     var onLayout: (() -> Void)?
+    var onScroll: (() -> Void)?
     var canAdd = false
+    private var scrollOrigin = NSPoint.zero
     private var scrollObserver: NSObjectProtocol?
     private var frameObserver: NSObjectProtocol?
 
@@ -138,6 +161,7 @@ final class EditorContainer: NSView {
         textView.typingAttributes = MarkdownStyler.base
         textView.backgroundColor = .textBackgroundColor
         textView.setAccessibilityLabel("方案正文")
+        textView.trackHover()
         container.widthTracksTextView = true
         container.lineFragmentPadding = 0
         scrollView.documentView = textView
@@ -162,7 +186,12 @@ final class EditorContainer: NSView {
         scrollView.contentView.postsBoundsChangedNotifications = true
         scrollObserver = NotificationCenter.default.addObserver(
             forName: NSView.boundsDidChangeNotification, object: scrollView.contentView, queue: .main
-        ) { [weak self] _ in self?.positionButton() }
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.positionButton()
+            let origin = self.scrollView.contentView.bounds.origin
+            if origin != self.scrollOrigin { self.scrollOrigin = origin; self.onScroll?() }
+        }
         // Rewrapping after a width change moves every marker.
         textView.postsFrameChangedNotifications = true
         frameObserver = NotificationCenter.default.addObserver(
@@ -206,6 +235,17 @@ final class EditorContainer: NSView {
         return (rect, origin.y + line.minY + manager.location(forGlyphAt: last).y)
     }
 
+    /// The character drawn under a point in text view coordinates; nil over margins and blank space.
+    func characterIndex(at point: NSPoint) -> Int? {
+        guard let manager = textView.layoutManager, let container = textView.textContainer,
+              manager.numberOfGlyphs > 0 else { return nil }
+        let origin = textView.textContainerOrigin
+        let local = NSPoint(x: point.x - origin.x, y: point.y - origin.y)
+        let glyph = manager.glyphIndex(for: local, in: container)
+        guard manager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container).contains(local) else { return nil }
+        return manager.characterIndexForGlyph(at: glyph)
+    }
+
     func positionButton() {
         let selected = textView.selectedRange()
         guard canAdd, selected.length > 0, !textView.hasMarkedText(),
@@ -213,24 +253,27 @@ final class EditorContainer: NSView {
             addButton.isHidden = true
             return
         }
-        let tail = NSRange(location: NSMaxRange(selected) - 1, length: 1)
-        let glyph = manager.glyphRange(forCharacterRange: tail, actualCharacterRange: nil)
-        var rect = manager.boundingRect(forGlyphRange: glyph, in: container)
-        rect.origin.x += textView.textContainerOrigin.x
-        rect.origin.y += textView.textContainerOrigin.y
-        guard textView.visibleRect.intersects(rect) else { addButton.isHidden = true; return }
-        let anchor = convert(rect, from: textView)
+        let glyphs = manager.glyphRange(forCharacterRange: selected, actualCharacterRange: nil)
+        var lines: [NSRect] = []
+        manager.enumerateEnclosingRects(forGlyphRange: glyphs, withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0),
+                                        in: container) { rect, _ in lines.append(rect) }
+        let origin = textView.textContainerOrigin
+        guard let firstLine = lines.first?.offsetBy(dx: origin.x, dy: origin.y),
+              let lastLine = lines.last?.offsetBy(dx: origin.x, dy: origin.y),
+              textView.visibleRect.intersects(firstLine.union(lastLine)) else {
+            addButton.isHidden = true
+            return
+        }
+        // This view is unflipped: maxY is the visual top of a line.
+        let first = convert(firstLine, from: textView)
+        let last = convert(lastLine, from: textView)
         let width = max(80, addButton.frame.width)
         let height: CGFloat = 28
-        // Prefer the right margin beside the selection's last line, where it never covers text.
-        let columnRight = convert(NSPoint(x: textView.textContainerOrigin.x + container.size.width, y: 0), from: textView).x
-        if bounds.width - columnRight >= width + 36 {
-            addButton.frame = NSRect(x: columnRight + 20, y: max(8, min(bounds.height - height - 4, anchor.midY - height / 2)),
-                                     width: width, height: height)
-        } else {
-            addButton.frame = NSRect(x: max(8, min(bounds.width - width - 18, anchor.maxX + 8)),
-                                     y: max(8, min(bounds.height - height - 4, anchor.minY - height - 4)), width: width, height: height)
-        }
+        // Centered just above the selection's first line; below its last line when scrolled against the top edge.
+        let above = first.maxY + 6
+        let y = above + height <= bounds.height - 4 ? above : max(8, last.minY - height - 6)
+        addButton.frame = NSRect(x: max(8, min(bounds.width - width - 18, first.midX - width / 2)), y: y,
+                                 width: width, height: height)
         addButton.isHidden = false
     }
 }
@@ -246,6 +289,8 @@ struct DocumentEditor: NSViewRepresentable {
         view.textView.isEditable = store.review == nil
         view.onAdd = { [weak store] in store?.addComment() }
         view.onLayout = { [weak coordinator = context.coordinator] in coordinator?.layoutMarkers() }
+        view.onScroll = { [weak coordinator = context.coordinator] in coordinator?.endHover() }
+        view.textView.onHover = { [weak coordinator = context.coordinator] point in coordinator?.hoverText(at: point) }
         context.coordinator.container = view
         return view
     }
@@ -286,6 +331,9 @@ struct DocumentEditor: NSViewRepresentable {
         private var lastDraft: Comment?
         private var hidden = IndexSet()
         private var markers: [UUID: CommentMarker] = [:]
+        private var hoveredMarker: UUID?
+        private var hoveredText: UUID?
+        private var previewID: UUID?
         private var editorPopoverID: UUID?
         private let previewPopover: NSPopover = {
             let popover = NSPopover()
@@ -342,21 +390,46 @@ struct DocumentEditor: NSViewRepresentable {
         }
 
         private func hover(_ marker: CommentMarker, _ inside: Bool) {
-            guard inside else {
-                previewPopover.close()
-                if store.draft == nil && store.activeID == marker.id { store.activeID = nil }
-                return
+            if inside { hoveredMarker = marker.id } else if hoveredMarker == marker.id { hoveredMarker = nil }
+            updatePreview()
+        }
+
+        /// Hovering highlighted text previews its comment too; nested ranges prefer the innermost.
+        func hoverText(at point: NSPoint?) {
+            let index = point.flatMap { container?.characterIndex(at: $0) }
+            hoveredText = index.flatMap { index in
+                store.comments.filter { NSLocationInRange(index, $0.range) }.min { $0.range.length < $1.range.length }?.id
             }
-            guard store.draft == nil, let comment = store.comments.first(where: { $0.id == marker.id }) else { return }
+            updatePreview()
+        }
+
+        func endHover() {
+            hoveredMarker = nil
+            hoveredText = nil
+            updatePreview()
+        }
+
+        private func updatePreview() {
+            let id = store.draft == nil ? hoveredMarker ?? hoveredText : nil
+            guard id != previewID else { return }
+            if let old = previewID {
+                previewPopover.close()
+                previewID = nil
+                if store.draft == nil && store.activeID == old { store.activeID = nil }
+            }
+            guard let id, let comment = store.comments.first(where: { $0.id == id }),
+                  let textView = container?.textView, let marker = markers[id] else { return }
             let host = NSHostingController(rootView: CommentPreview(comment: comment))
             host.sizingOptions = .preferredContentSize
             previewPopover.contentViewController = host
-            previewPopover.show(relativeTo: marker.frame, of: container?.textView ?? marker, preferredEdge: .maxY)
-            store.activeID = comment.id
+            previewPopover.show(relativeTo: marker.frame, of: textView, preferredEdge: .maxY)
+            previewID = id
+            store.activeID = id
         }
 
         private func press(_ marker: CommentMarker) {
             previewPopover.close()
+            previewID = nil
             guard let comment = store.comments.first(where: { $0.id == marker.id }) else { return }
             if store.draft?.id == comment.id { return }
             store.edit(comment)
@@ -368,6 +441,7 @@ struct DocumentEditor: NSViewRepresentable {
                 if editorPopover.isShown { editorPopoverID = nil; editorPopover.close() }
                 return
             }
+            if previewID != nil { previewPopover.close(); previewID = nil }
             if editorPopover.isShown && editorPopoverID == draft.id { return }
             if editorPopover.isShown { editorPopoverID = nil; editorPopover.close() }
             // A fresh editor per comment so focus and scroll state never carry over.
