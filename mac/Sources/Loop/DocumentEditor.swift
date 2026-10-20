@@ -69,7 +69,38 @@ final class PlanTextView: NSTextView {
                              xRadius: 1.5, yRadius: 1.5).fill()
             }
         }
+        drawInlineCode(in: rect, storage: storage, manager: manager, container: container, origin: origin)
         drawHighlights(in: rect, storage: storage, manager: manager, container: container, origin: origin)
+    }
+
+    /// A rounded background centered on the code's glyphs: equal room above and below, and on both sides.
+    private func drawInlineCode(in rect: NSRect, storage: NSTextStorage, manager: NSLayoutManager,
+                                container: NSTextContainer, origin: NSPoint) {
+        let pad = MarkdownStyler.codePadding
+        storage.enumerateAttribute(.loopInlineCode, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard value != nil, let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont else { return }
+            let glyphs = manager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            manager.enumerateLineFragments(forGlyphRange: glyphs) { line, used, _, lineGlyphs, _ in
+                let part = NSIntersectionRange(lineGlyphs, glyphs)
+                guard part.length > 0 else { return }
+                let start = manager.location(forGlyphAt: part.location)
+                let endGlyph = NSMaxRange(part) - 1
+                var endX = min(manager.boundingRect(forGlyphRange: NSRange(location: endGlyph, length: 1), in: container).maxX,
+                               used.maxX)
+                // The last character's kern is the code's own padding plus any comment markers after it.
+                if endGlyph == NSMaxRange(glyphs) - 1 {
+                    let kern = storage.attribute(.kern, at: manager.characterIndexForGlyph(at: endGlyph), effectiveRange: nil) as? CGFloat ?? 0
+                    endX -= max(0, kern - pad)
+                }
+                let startX = line.minX + start.x - (part.location == glyphs.location ? pad : 0)
+                let baseline = origin.y + line.minY + start.y
+                let box = NSRect(x: origin.x + startX, y: baseline - font.ascender - 1,
+                                 width: endX - startX, height: font.ascender - font.descender + 2)
+                guard box.intersects(rect) else { return }
+                Theme.codeBackground.setFill()
+                NSBezierPath(roundedRect: box, xRadius: 4, yRadius: 4).fill()
+            }
+        }
     }
 
     /// The white sheet behind the text column.

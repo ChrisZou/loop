@@ -41,7 +41,7 @@ enum Demo {
             let range = (text as NSString).range(of: quote)
             return Comment(location: range.location, length: range.length, quote: quote, body: body)
         }
-        return Session(text: text, comments: comments, general: "请按单人两周可交付的范围重新规划，明确第一版边界与验收步骤。")
+        return Session(text: text, comments: comments, generals: ["请按单人两周可交付的范围重新规划，明确第一版边界与验收步骤。"])
     }
 
     /// A review of the demo plan; submitting prints the feedback to standard output.

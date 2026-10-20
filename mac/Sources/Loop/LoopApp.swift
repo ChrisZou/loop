@@ -13,7 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        // A 总评 still being written is kept, like a comment card left open.
+        // A 总评 still in the composer is kept as a note, like a comment card left open.
         store?.saveGeneral()
         store?.saveNow()
         // Closing a review without submitting must not look like an approval to the waiting agent.
@@ -43,7 +43,7 @@ struct LoopApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandMenu("批注") {
-                Button(store.draft != nil ? "保存批注" : store.editingGeneral ? "保存总评" : "添加批注", action: store.commitShortcut)
+                Button(store.draft != nil ? "保存批注" : store.composingGeneral ? "保存总评" : "添加批注", action: store.commitShortcut)
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(!store.canCommitShortcut)
                 Divider()

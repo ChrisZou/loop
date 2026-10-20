@@ -13,7 +13,35 @@ struct Comment: Identifiable, Codable, Equatable {
 struct Session: Codable {
     var text = ""
     var comments: [Comment] = []
-    var general = ""
+    /// 总评 notes, in the order they were written.
+    var generals: [String] = []
+
+    init(text: String = "", comments: [Comment] = [], generals: [String] = []) {
+        self.text = text
+        self.comments = comments
+        self.generals = generals
+    }
+
+    private enum CodingKeys: String, CodingKey { case text, comments, generals, general }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
+        comments = try container.decodeIfPresent([Comment].self, forKey: .comments) ?? []
+        // Drafts saved before 总评 became a list hold one `general` string.
+        if let generals = try container.decodeIfPresent([String].self, forKey: .generals) {
+            self.generals = generals
+        } else if let general = try container.decodeIfPresent(String.self, forKey: .general), !general.isEmpty {
+            generals = [general]
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(text, forKey: .text)
+        try container.encode(comments, forKey: .comments)
+        try container.encode(generals, forKey: .generals)
+    }
 }
 
 /// Ranges are NSTextView's UTF-16 offsets, including emoji and composed text.

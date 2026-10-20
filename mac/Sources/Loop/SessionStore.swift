@@ -3,10 +3,13 @@ import Combine
 
 final class SessionStore: ObservableObject {
     @Published var comments: [Comment] { didSet { scheduleSave() } }
-    /// The saved 总评; `generalDraft` holds it while it is being edited.
-    @Published var general: String { didSet { scheduleSave() } }
+    /// Saved 总评 notes. The composer below the plan writes a new one into `generalDraft`,
+    /// or changes the one at `editingGeneral`.
+    @Published var generals: [String] { didSet { scheduleSave() } }
     @Published var generalDraft = ""
-    @Published var editingGeneral = false
+    @Published var editingGeneral: Int?
+    /// The composer has focus, so ⌘↩ saves the 总评 instead of starting a comment.
+    @Published var composingGeneral = false
     @Published var selection = NSRange(location: 0, length: 0)
     @Published var activeID: UUID?
     @Published var draft: Comment?
@@ -45,7 +48,7 @@ final class SessionStore: ObservableObject {
             comment.quote = CommentRanges.visibleText(of: comment.range, in: text, hidden: hidden)
             return comment
         }
-        general = restored.general
+        generals = restored.generals
     }
 
     /// The plan's first top-level heading, else its file name.
@@ -64,8 +67,8 @@ final class SessionStore: ObservableObject {
         guard draft == nil, let range = CommentRanges.trimmed(selection, in: text, hidden: hidden) else { return false }
         return !comments.contains { $0.range == range }
     }
-    var exported: String { FeedbackExporter.export(text: text, comments: comments, general: general, hidden: hidden) }
-    var hasFeedback: Bool { !comments.isEmpty || !general.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    var exported: String { FeedbackExporter.export(text: text, comments: comments, generals: generals, hidden: hidden) }
+    var hasFeedback: Bool { !comments.isEmpty || !generals.isEmpty }
     /// What the reviewing agent receives; submitting with no feedback means the plan is approved.
     var submission: String { hasFeedback ? exported : ReviewRequest.approval }
 
@@ -108,31 +111,44 @@ final class SessionStore: ObservableObject {
         if activeID == id { activeID = nil }
     }
 
-    func beginGeneral() {
-        guard !editingGeneral else { return }
-        generalDraft = general
-        editingGeneral = true
+    /// Files the composer's text as a 总评 note — a new one, or the one being changed — and empties the composer.
+    func saveGeneral() {
+        let note = generalDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let index = editingGeneral, generals.indices.contains(index) {
+            if note.isEmpty { generals.remove(at: index) } else { generals[index] = note }
+        } else if !note.isEmpty {
+            generals.append(note)
+        }
+        generalDraft = ""
+        editingGeneral = nil
     }
 
-    func saveGeneral() {
-        guard editingGeneral else { return }
-        general = generalDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        editingGeneral = false
+    func editGeneral(at index: Int) {
+        guard generals.indices.contains(index) else { return }
+        editingGeneral = index
+        generalDraft = generals[index]
     }
 
     func cancelGeneral() {
-        generalDraft = general
-        editingGeneral = false
+        generalDraft = ""
+        editingGeneral = nil
     }
 
-    /// ⌘↩ saves whatever is being written — a comment, or the 总评 — and otherwise starts a comment.
+    func removeGeneral(at index: Int) {
+        guard generals.indices.contains(index) else { return }
+        generals.remove(at: index)
+        if editingGeneral == index { cancelGeneral() } else if let editing = editingGeneral, editing > index { editingGeneral = editing - 1 }
+    }
+
+    /// ⌘↩ saves whatever is being written — a comment, or a 总评 — and otherwise starts a comment.
     func commitShortcut() {
-        if draft != nil { saveDraft() } else if editingGeneral { saveGeneral() } else { addComment() }
+        if draft != nil { saveDraft() } else if composingGeneral { saveGeneral() } else { addComment() }
     }
 
     var canCommitShortcut: Bool {
         if draft != nil { return !draftBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        return editingGeneral || canAdd
+        if composingGeneral { return editingGeneral != nil || !generalDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        return canAdd
     }
 
     /// Keeps a comment or 总评 that is still being typed, then asks before approving a plan without feedback.
@@ -167,7 +183,7 @@ final class SessionStore: ObservableObject {
     func saveNow() {
         guard persists, !submitted else { return }
         saveWork?.cancel()
-        let session = Session(text: text, comments: comments, general: general)
+        let session = Session(text: text, comments: comments, generals: generals)
         let url = review.draftURL
         // Synchronous serial writes guarantee the final quit save is durable and newest.
         do {

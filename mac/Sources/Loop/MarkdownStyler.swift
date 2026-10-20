@@ -5,6 +5,8 @@ extension NSAttributedString.Key {
     static let loopMarkup = NSAttributedString.Key("LoopMarkup")
     /// Block decorations the text view draws behind the text: a card for code, a bar for quotes.
     static let loopBlock = NSAttributedString.Key("LoopBlock")
+    /// Inline code, whose rounded background the text view draws centered on the glyphs.
+    static let loopInlineCode = NSAttributedString.Key("LoopInlineCode")
 }
 
 enum MarkdownStyler {
@@ -14,6 +16,8 @@ enum MarkdownStyler {
     static let bodyFont = NSFont.systemFont(ofSize: 15.5)
     /// Space reserved after a commented range's last character for each inline marker.
     static let markerAdvance: CGFloat = 21
+    /// Room kerned on each side of inline code for its background.
+    static let codePadding: CGFloat = 4
     static var base: [NSAttributedString.Key: Any] {
         [.font: bodyFont, .foregroundColor: Theme.ink, .paragraphStyle: paragraphStyle()]
     }
@@ -129,13 +133,20 @@ enum MarkdownStyler {
         matches("(`)([^`\\n]+)(`)", text: text) { match in
             guard outsideCode(match.range) else { return }
             spans.insert(integersIn: match.range.location..<NSMaxRange(match.range))
+            let content = match.range(at: 2)
             storage.addAttributes([
                 .font: NSFont.monospacedSystemFont(ofSize: 13.5, weight: .regular),
                 .foregroundColor: Theme.codeText,
-                .backgroundColor: Theme.codeBackground
-            ], range: match.range(at: 2))
+                .loopInlineCode: true
+            ], range: content)
             markup(match.range(at: 1))
             markup(match.range(at: 3))
+            // The backticks are hidden, so kerning makes the room the background needs on either side.
+            storage.addAttribute(.kern, value: codePadding, range: NSRange(location: NSMaxRange(content) - 1, length: 1))
+            let before = match.range.location - 1
+            if before >= 0, (text as NSString).character(at: before) != 0x0A {
+                storage.addAttribute(.kern, value: codePadding, range: NSRange(location: before, length: 1))
+            }
         }
         // Code spans win over emphasis, and bold markers hug their words (CommonMark flanking),
         // so a literal `**` in prose or code never starts a bold run.
@@ -155,7 +166,8 @@ enum MarkdownStyler {
 
         // Kerning makes room for markers without inserting characters, so ranges stay valid.
         for (marker, count) in markerCounts(comments, in: text, hidden: hidden) {
-            storage.addAttribute(.kern, value: markerAdvance * CGFloat(count), range: marker)
+            let existing = storage.attribute(.kern, at: marker.location, effectiveRange: nil) as? CGFloat ?? 0
+            storage.addAttribute(.kern, value: existing + markerAdvance * CGFloat(count), range: marker)
         }
         storage.endEditing()
         return hidden

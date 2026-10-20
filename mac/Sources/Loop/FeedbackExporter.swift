@@ -1,8 +1,12 @@
 import Foundation
 
 enum FeedbackExporter {
-    /// Quotes leave out `hidden` markdown syntax, so they read the way the plan looked on screen.
     static func export(text: String, comments: [Comment], general: String, hidden: IndexSet = IndexSet()) -> String {
+        export(text: text, comments: comments, generals: [general], hidden: hidden)
+    }
+
+    /// Quotes leave out `hidden` markdown syntax, so they read the way the plan looked on screen.
+    static func export(text: String, comments: [Comment], generals: [String], hidden: IndexSet = IndexSet()) -> String {
         let sorted = comments.enumerated().sorted {
             $0.element.location == $1.element.location
                 ? $0.offset < $1.offset : $0.element.location < $1.element.location
@@ -19,8 +23,13 @@ enum FeedbackExporter {
             let body = lines(comment.body).joined(separator: "\n   ")
             sections.append("\(index + 1). 原文：\n\(quoted)\n   意见：\(body)")
         }
-        let general = general.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !general.isEmpty { sections.append("总体意见：\(general)") }
+        let notes = generals.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        if notes.count == 1 {
+            sections.append("总体意见：\(notes[0])")
+        } else if notes.count > 1 {
+            let numbered = notes.enumerated().map { "\($0.offset + 1). " + lines($0.element).joined(separator: "\n   ") }
+            sections.append((["总体意见："] + numbered).joined(separator: "\n"))
+        }
         return sections.joined(separator: "\n\n")
     }
 

@@ -40,7 +40,7 @@ enum SelfTest {
         check(demo.comments.count == 3 && demo.comments.allSatisfy { CommentRanges.valid($0.range, in: demo.text) && (demo.text as NSString).substring(with: $0.range) == $0.quote }, "demo quotes match")
         do {
             let restored = try JSONDecoder().decode(Session.self, from: JSONEncoder().encode(demo))
-            check(restored.text == demo.text && restored.comments == demo.comments && restored.general == demo.general, "JSON round trip")
+            check(restored.text == demo.text && restored.comments == demo.comments && restored.generals == demo.generals, "JSON round trip")
         } catch { check(false, "JSON round trip: \(error)") }
 
         // Restored sessions are never saved, which keeps self-tests away from the user's drafts.
@@ -138,15 +138,26 @@ enum SelfTest {
         // Review mode: the agent gets the export, or an explicit approval when there is nothing to say.
         let reviewStore = reviewing(Session(text: text))
         check(!reviewStore.hasFeedback && reviewStore.submission == ReviewRequest.approval, "empty review submits approval")
-        reviewStore.beginGeneral()
+        reviewStore.composingGeneral = true
         reviewStore.generalDraft = "  范围再收一收 \n"
         check(!reviewStore.hasFeedback, "a 总评 still being written is not feedback until saved")
         reviewStore.commitShortcut()
-        check(reviewStore.general == "范围再收一收" && !reviewStore.editingGeneral, "⌘↩ saves the 总评, trimmed")
-        reviewStore.beginGeneral()
+        check(reviewStore.generals == ["范围再收一收"] && reviewStore.generalDraft.isEmpty,
+              "⌘↩ files the 总评, trimmed, and empties the composer")
+        reviewStore.generalDraft = "标签放到第二版"
+        reviewStore.commitShortcut()
+        reviewStore.editGeneral(at: 0)
+        reviewStore.generalDraft = "范围再收"
+        reviewStore.commitShortcut()
+        check(reviewStore.generals == ["范围再收", "标签放到第二版"], "changing a 总评 keeps its place")
+        reviewStore.editGeneral(at: 1)
         reviewStore.generalDraft = "改了又不要"
         reviewStore.cancelGeneral()
-        check(reviewStore.general == "范围再收一收", "Esc keeps the saved 总评")
+        check(reviewStore.generals.count == 2 && reviewStore.editingGeneral == nil && reviewStore.generalDraft.isEmpty,
+              "Esc leaves saved 总评 untouched")
+        check(reviewStore.exported.hasSuffix("总体意见：\n1. 范围再收\n2. 标签放到第二版"), "several 总评 are numbered")
+        let legacy = try? JSONDecoder().decode(Session.self, from: Data(#"{"text":"a","comments":[],"general":"旧总评"}"#.utf8))
+        check(legacy?.generals == ["旧总评"], "drafts with a single general opinion still load")
         check(reviewStore.submission == reviewStore.exported, "general-only review submits the export")
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("loop-selftest-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
