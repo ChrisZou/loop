@@ -6,6 +6,8 @@ swift build -c release
 BIN_DIR="$(swift build -c release --show-bin-path)"
 APP="build/Loop.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+# A new file, not an overwrite: a review window still running the old binary keeps a valid code signature.
+rm -f "$APP/Contents/MacOS/Loop"
 cp "$BIN_DIR/Loop" "$APP/Contents/MacOS/Loop"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

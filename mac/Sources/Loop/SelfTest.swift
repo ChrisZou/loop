@@ -77,6 +77,12 @@ enum SelfTest {
         check(CommentRanges.trimmed(NSRange(location: 0, length: 2), in: " \n第") == nil, "whitespace-only selection cannot be commented")
         check(CommentRanges.trimmed(NSRange(location: 0, length: 6), in: "**粗体**", hidden: IndexSet([0, 1, 4, 5]))
               == NSRange(location: 2, length: 2), "new comments trim hidden markdown at the edges")
+        let literal = "保留？** 普通，多出来的 `**` 是"
+        let literalCode = (literal as NSString).range(of: "`**`")
+        check(MarkdownStyler.apply(to: NSTextStorage(string: literal), comments: [], activeID: nil, draft: nil)
+              == IndexSet([literalCode.location, NSMaxRange(literalCode) - 1]), "literal ** in prose and code spans is not bold")
+        check(MarkdownStyler.apply(to: NSTextStorage(string: "**粗体** 和 `代码`"), comments: [], activeID: nil, draft: nil)
+              == IndexSet([0, 1, 4, 5, 9, 12]), "bold and code spans still hide their markers")
         let across = Comment(location: 2, length: 6, quote: "", body: "意见")
         check(FeedbackExporter.export(text: "**粗体**后文", comments: [across], general: "", hidden: IndexSet([0, 1, 4, 5]))
               .contains("   > 粗体后文\n"), "quotes leave out hidden markdown inside the selection")

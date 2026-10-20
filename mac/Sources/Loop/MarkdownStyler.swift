@@ -46,6 +46,7 @@ enum MarkdownStyler {
         let full = NSRange(location: 0, length: storage.length)
         var hidden = IndexSet()
         var code = IndexSet()
+        var spans = IndexSet()
         func markup(_ range: NSRange, _ kind: Markup = .hidden) {
             guard range.location != NSNotFound, range.length > 0 else { return }
             storage.addAttribute(.loopMarkup, value: kind.rawValue, range: range)
@@ -116,23 +117,28 @@ enum MarkdownStyler {
                                    .loopBlock: Block.quote.rawValue], range: match.range)
             markup(match.range(at: 1))
         }
-        matches("(\\*\\*)([^\\n]+?)(\\*\\*)", text: text) { match in
-            guard outsideCode(match.range) else { return }
-            let inner = match.range(at: 2)
-            storage.enumerateAttribute(.font, in: inner) { value, range, _ in
-                let font = value as? NSFont ?? bodyFont
-                storage.addAttribute(.font, value: NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask), range: range)
-            }
-            markup(match.range(at: 1))
-            markup(match.range(at: 3))
-        }
         matches("(`)([^`\\n]+)(`)", text: text) { match in
             guard outsideCode(match.range) else { return }
+            spans.insert(integersIn: match.range.location..<NSMaxRange(match.range))
             storage.addAttributes([
                 .font: NSFont.monospacedSystemFont(ofSize: 14, weight: .regular),
                 .foregroundColor: NSColor.systemIndigo,
                 .backgroundColor: NSColor.quaternaryLabelColor.withAlphaComponent(0.12)
             ], range: match.range(at: 2))
+            markup(match.range(at: 1))
+            markup(match.range(at: 3))
+        }
+        // Code spans win over emphasis, and bold markers hug their words (CommonMark flanking),
+        // so a literal `**` in prose or code never starts a bold run.
+        matches("(\\*\\*)(?=\\S)([^\\n]+?)(?<=\\S)(\\*\\*)", text: text) { match in
+            let delimiters = [match.range(at: 1), match.range(at: 3)]
+            guard outsideCode(match.range),
+                  !delimiters.contains(where: { spans.intersects(integersIn: $0.location..<NSMaxRange($0)) }) else { return }
+            let inner = match.range(at: 2)
+            storage.enumerateAttribute(.font, in: inner) { value, range, _ in
+                let font = value as? NSFont ?? bodyFont
+                storage.addAttribute(.font, value: NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask), range: range)
+            }
             markup(match.range(at: 1))
             markup(match.range(at: 3))
         }
