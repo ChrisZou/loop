@@ -6,8 +6,6 @@ final class PlanTextView: NSTextView {
     var onHover: ((NSPoint?) -> Void)?
     private var hoverArea: NSTrackingArea?
 
-    override func paste(_ sender: Any?) { pasteAsPlainText(sender) }
-
     func trackHover() {
         let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
                                   owner: self, userInfo: nil)
@@ -23,27 +21,6 @@ final class PlanTextView: NSTextView {
     override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
         if event.trackingArea === hoverArea { onHover?(nil) }
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        guard string.isEmpty else { return }
-        let placeholder = "在此粘贴 AI 生成的方案 / 计划…\n选中文字后按 ⌘↩ 或点击「批注」添加意见，⇧⌘C 一键导出反馈。"
-        let origin = textContainerOrigin
-        (placeholder as NSString).draw(
-            with: NSRect(x: origin.x, y: origin.y,
-                         width: max(0, bounds.width - origin.x - textContainerInset.width),
-                         height: max(0, bounds.height - origin.y)),
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            attributes: [.font: MarkdownStyler.bodyFont,
-                         .foregroundColor: NSColor.secondaryLabelColor,
-                         .paragraphStyle: MarkdownStyler.paragraph]
-        )
-    }
-
-    override func didChangeText() {
-        super.didChangeText()
-        needsDisplay = true
     }
 
     /// Code cards and quote bars, drawn beneath highlights and text.
@@ -141,16 +118,10 @@ final class EditorContainer: NSView {
         scrollView.drawsBackground = true
         scrollView.backgroundColor = .textBackgroundColor
         scrollView.borderType = .noBorder
+        // The plan is the agent's text: comment on it, don't edit it.
         textView.isRichText = false
-        textView.isEditable = true
+        textView.isEditable = false
         textView.isSelectable = true
-        textView.allowsUndo = true
-        textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false
-        textView.isAutomaticTextReplacementEnabled = false
-        textView.isAutomaticSpellingCorrectionEnabled = false
-        textView.isGrammarCheckingEnabled = false
-        textView.isContinuousSpellCheckingEnabled = false
         textView.isHorizontallyResizable = false
         textView.isVerticallyResizable = true
         textView.minSize = .zero
@@ -158,7 +129,6 @@ final class EditorContainer: NSView {
         textView.autoresizingMask = [.width]
         textView.textContainerInset = NSSize(width: 40, height: 44)
         textView.font = MarkdownStyler.bodyFont
-        textView.typingAttributes = MarkdownStyler.base
         textView.backgroundColor = .textBackgroundColor
         textView.setAccessibilityLabel("方案正文")
         textView.trackHover()
@@ -204,6 +174,17 @@ final class EditorContainer: NSView {
         for observer in [scrollObserver, frameObserver].compactMap({ $0 }) { NotificationCenter.default.removeObserver(observer) }
     }
     @objc private func addComment() { onAdd?() }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else { return }
+        // The toolbar's content inset arrives after the text is laid out; start reading at the very top.
+        DispatchQueue.main.async { [weak self] in
+            guard let clip = self?.scrollView.contentView else { return }
+            clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: -clip.contentInsets.top))
+            self?.scrollView.reflectScrolledClipView(clip)
+        }
+    }
 
     override func layout() {
         super.layout()
@@ -285,8 +266,7 @@ struct DocumentEditor: NSViewRepresentable {
     func makeNSView(context: Context) -> EditorContainer {
         let view = EditorContainer(frame: .zero)
         view.textView.delegate = context.coordinator
-        // A plan under review is the agent's text: comment on it, don't edit it.
-        view.textView.isEditable = store.review == nil
+        view.textView.string = store.text
         view.onAdd = { [weak store] in store?.addComment() }
         view.onLayout = { [weak coordinator = context.coordinator] in coordinator?.layoutMarkers() }
         view.onScroll = { [weak coordinator = context.coordinator] in coordinator?.endHover() }
@@ -299,14 +279,6 @@ struct DocumentEditor: NSViewRepresentable {
         let coordinator = context.coordinator
         coordinator.updating = true
         defer { coordinator.updating = false }
-        if view.textView.string != store.text {
-            let oldSelection = view.textView.selectedRange()
-            view.textView.string = store.text
-            view.textView.needsDisplay = true
-            let length = (store.text as NSString).length
-            view.textView.setSelectedRange(NSRange(location: min(oldSelection.location, length), length: 0))
-            view.textView.undoManager?.removeAllActions()
-        }
         coordinator.styleIfNeeded()
         if coordinator.lastNavigation != store.navigationRequest {
             coordinator.lastNavigation = store.navigationRequest
@@ -325,11 +297,10 @@ struct DocumentEditor: NSViewRepresentable {
         weak var container: EditorContainer?
         var updating = false
         var lastNavigation: UUID?
-        private var lastText: String?
+        private var styled = false
         private var lastComments: [Comment] = []
         private var lastActive: UUID?
         private var lastDraft: Comment?
-        private var hidden = IndexSet()
         private var markers: [UUID: CommentMarker] = [:]
         private var hoveredMarker: UUID?
         private var hoveredText: UUID?
@@ -353,12 +324,12 @@ struct DocumentEditor: NSViewRepresentable {
         func layoutMarkers() {
             guard let container, let storage = container.textView.textStorage else { return }
             let text = container.textView.string
-            let counts = MarkdownStyler.markerCounts(store.comments, in: text, hidden: hidden)
+            let counts = MarkdownStyler.markerCounts(store.comments, in: text, hidden: store.hidden)
             var slots: [NSRange: Int] = [:]
             var placed = Set<UUID>()
             for (index, comment) in store.sortedComments.enumerated() {
-                guard let marker = CommentRanges.markerRange(of: comment.range, in: text, hidden: hidden),
-                      let (rect, baseline) = container.markerPlacement(for: comment.range, hidden: hidden) else { continue }
+                guard let marker = CommentRanges.markerRange(of: comment.range, in: text, hidden: store.hidden),
+                      let (rect, baseline) = container.markerPlacement(for: comment.range, hidden: store.hidden) else { continue }
                 let slot = slots[marker, default: 0]
                 slots[marker] = slot + 1
                 // The glyph's advance includes the kerning reserved for its markers.
@@ -452,7 +423,7 @@ struct DocumentEditor: NSViewRepresentable {
             if let marker = markers[draft.id] {
                 editorPopoverID = draft.id
                 editorPopover.show(relativeTo: marker.frame, of: container.textView, preferredEdge: .maxY)
-            } else if let (rect, _) = container.markerPlacement(for: draft.range, hidden: hidden) {
+            } else if let (rect, _) = container.markerPlacement(for: draft.range, hidden: store.hidden) {
                 editorPopoverID = draft.id
                 editorPopover.show(relativeTo: rect, of: container.textView, preferredEdge: .maxY)
             }
@@ -484,37 +455,15 @@ struct DocumentEditor: NSViewRepresentable {
         }
 
         func styleIfNeeded() {
-            guard let view = container?.textView, let storage = view.textStorage,
-                  !view.hasMarkedText() else { return }
-            guard lastText != view.string || lastComments != store.comments || lastActive != store.activeID || lastDraft != store.draft else { return }
-            lastText = view.string
+            guard let view = container?.textView, let storage = view.textStorage else { return }
+            guard !styled || lastComments != store.comments || lastActive != store.activeID || lastDraft != store.draft else { return }
+            styled = true
             lastComments = store.comments
             lastActive = store.activeID
             lastDraft = store.draft
             let selections = view.selectedRanges
-            // Reviewing reads like a document; pasting and editing keep the markdown visible.
-            hidden = MarkdownStyler.apply(to: storage, comments: store.comments, activeID: store.activeID,
-                                          draft: store.draft, hideMarkup: store.review != nil)
+            MarkdownStyler.apply(to: storage, comments: store.comments, activeID: store.activeID, draft: store.draft)
             view.selectedRanges = selections
-            view.typingAttributes = MarkdownStyler.base
-        }
-
-        func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
-            guard !updating, let replacementString else { return true }
-            store.willReplace(affectedCharRange, with: replacementString)
-            return true
-        }
-
-        func textDidChange(_ notification: Notification) {
-            guard !updating, let view = notification.object as? NSTextView else { return }
-            store.textChanged(view.string)
-            store.selection = view.selectedRange()
-            updating = true
-            styleIfNeeded()
-            updating = false
-            container?.canAdd = store.canAdd
-            container?.positionButton()
-            layoutMarkers()
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {

@@ -4,7 +4,6 @@ import CryptoKit
 /// `Loop --review <plan> [--out <file>]`: an agent hands a plan to the user and gets the feedback back on submit.
 struct ReviewRequest {
     static let approval = "我看过了这版方案，没有修改意见，可以按这版继续。"
-    static var current: ReviewRequest?
 
     let source: URL
     let output: URL?

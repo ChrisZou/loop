@@ -1,7 +1,7 @@
 import AppKit
 
 extension NSAttributedString.Key {
-    /// Markdown syntax characters the layout manager hides (or draws as a bullet) while reviewing.
+    /// Markdown syntax characters the layout manager hides (or draws as a bullet).
     static let loopMarkup = NSAttributedString.Key("LoopMarkup")
     /// Block decorations the text view draws behind the text: a card for code, a bar for quotes.
     static let loopBlock = NSAttributedString.Key("LoopBlock")
@@ -41,20 +41,15 @@ enum MarkdownStyler {
 
     /// Styles the text with attributes only, so comment ranges stay valid. Returns the hidden character indexes.
     @discardableResult
-    static func apply(to storage: NSTextStorage, comments: [Comment], activeID: UUID?, draft: Comment?,
-                      hideMarkup: Bool) -> IndexSet {
+    static func apply(to storage: NSTextStorage, comments: [Comment], activeID: UUID?, draft: Comment?) -> IndexSet {
         let text = storage.string
         let full = NSRange(location: 0, length: storage.length)
         var hidden = IndexSet()
         var code = IndexSet()
         func markup(_ range: NSRange, _ kind: Markup = .hidden) {
             guard range.location != NSNotFound, range.length > 0 else { return }
-            if hideMarkup {
-                storage.addAttribute(.loopMarkup, value: kind.rawValue, range: range)
-                if kind == .hidden { hidden.insert(integersIn: range.location..<NSMaxRange(range)) }
-            } else {
-                storage.addAttribute(.foregroundColor, value: NSColor.tertiaryLabelColor, range: range)
-            }
+            storage.addAttribute(.loopMarkup, value: kind.rawValue, range: range)
+            if kind == .hidden { hidden.insert(integersIn: range.location..<NSMaxRange(range)) }
         }
         func outsideCode(_ range: NSRange) -> Bool { !code.intersects(integersIn: range.location..<NSMaxRange(range)) }
 
@@ -71,20 +66,16 @@ enum MarkdownStyler {
             for (index, fence) in [match.range(at: 1), match.range(at: 3)].enumerated() {
                 markup(fence)
                 // A hidden fence becomes the card's top or bottom padding.
-                if hideMarkup {
-                    storage.addAttributes([
-                        .font: NSFont.systemFont(ofSize: 2),
-                        .paragraphStyle: paragraphStyle(after: index == 1 ? 16 : 0, lineSpacing: 0, lineHeight: index == 0 ? 14 : 10)
-                    ], range: fence)
-                }
+                storage.addAttributes([
+                    .font: NSFont.systemFont(ofSize: 2),
+                    .paragraphStyle: paragraphStyle(after: index == 1 ? 16 : 0, lineSpacing: 0, lineHeight: index == 0 ? 14 : 10)
+                ], range: fence)
             }
         }
         // Blank lines only separate markdown blocks; paragraph spacing already does that visually.
-        // While editing they keep a little height so the caret can still land on them.
         matches("(?m)^[ \\t]*\\n", text: text) { match in
             guard outsideCode(match.range) else { return }
-            storage.addAttribute(.paragraphStyle, value: paragraphStyle(after: 0, lineSpacing: 0, lineHeight: hideMarkup ? 1 : 6),
-                                 range: match.range)
+            storage.addAttribute(.paragraphStyle, value: paragraphStyle(after: 0, lineSpacing: 0, lineHeight: 1), range: match.range)
         }
         matches("(?m)^(#{1,6})([ \\t]+)(.+)$", text: text) { match in
             guard outsideCode(match.range) else { return }
@@ -106,7 +97,6 @@ enum MarkdownStyler {
                                                                        firstLine: nesting + 6), range: match.range)
             markup(match.range(at: 1))
             markup(match.range(at: 2), .bullet)
-            if !hideMarkup { storage.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: match.range(at: 2)) }
         }
         matches("(?m)^([ \\t]*)([0-9]+[.)])([ \\t]+).*$", text: text) { match in
             guard outsideCode(match.range) else { return }
@@ -122,8 +112,8 @@ enum MarkdownStyler {
         matches("(?m)^(>[ \\t]?)(.*)$", text: text) { match in
             guard outsideCode(match.range) else { return }
             storage.addAttributes([.foregroundColor: NSColor.secondaryLabelColor,
-                                   .paragraphStyle: paragraphStyle(indent: hideMarkup ? 18 : 0)], range: match.range)
-            if hideMarkup { storage.addAttribute(.loopBlock, value: Block.quote.rawValue, range: match.range) }
+                                   .paragraphStyle: paragraphStyle(indent: 18),
+                                   .loopBlock: Block.quote.rawValue], range: match.range)
             markup(match.range(at: 1))
         }
         matches("(\\*\\*)([^\\n]+?)(\\*\\*)", text: text) { match in

@@ -34,17 +34,6 @@ enum SelfTest {
         check(!FeedbackExporter.export(text: text, comments: [first], general: " \n").contains("总体意见"), "omit blank general")
         let stale = Comment(location: 999, length: 3, quote: "缓存\r\n原文", body: "意见\r\n续行")
         check(FeedbackExporter.export(text: text, comments: [stale], general: "").contains("   > 缓存\n   > 原文\n   意见：意见\n   续行"), "fallback quote and normalized newlines")
-        let range = NSRange(location: 5, length: 5)
-        check(CommentRanges.adjusted(range, replacing: NSRange(location: 2, length: 0), withLength: 2) == NSRange(location: 7, length: 5), "insert before")
-        check(CommentRanges.adjusted(range, replacing: NSRange(location: 5, length: 0), withLength: 2) == NSRange(location: 7, length: 5), "insert at start")
-        check(CommentRanges.adjusted(range, replacing: NSRange(location: 7, length: 0), withLength: 2) == NSRange(location: 5, length: 7), "insert inside")
-        check(CommentRanges.adjusted(range, replacing: NSRange(location: 10, length: 0), withLength: 2) == range, "insert at end")
-        check(CommentRanges.adjusted(range, replacing: NSRange(location: 0, length: 2), withLength: 0) == NSRange(location: 3, length: 5), "delete before")
-        check(CommentRanges.adjusted(range, replacing: NSRange(location: 6, length: 2), withLength: 0) == NSRange(location: 5, length: 3), "delete inside")
-        check(CommentRanges.adjusted(range, replacing: NSRange(location: 3, length: 4), withLength: 0) == NSRange(location: 3, length: 3), "delete across start")
-        check(CommentRanges.adjusted(range, replacing: NSRange(location: 8, length: 4), withLength: 0) == NSRange(location: 5, length: 3), "delete across end")
-        check(CommentRanges.adjusted(range, replacing: NSRange(location: 4, length: 7), withLength: 0) == nil, "fully deleted comment")
-        check(CommentRanges.adjusted(range, replacing: NSRange(location: 6, length: 2), withLength: 4) == NSRange(location: 5, length: 7), "replace inside")
         check(CommentRanges.valid(lastRange, in: text), "UTF-16 range")
         check(!CommentRanges.valid(NSRange(location: Int.max, length: 1), in: text), "reject invalid range without overflow")
         let demo = Demo.session
@@ -54,8 +43,12 @@ enum SelfTest {
             check(restored.text == demo.text && restored.comments == demo.comments && restored.general == demo.general, "JSON round trip")
         } catch { check(false, "JSON round trip: \(error)") }
 
-        // Isolated session and pasteboard keep self-tests away from the user's data.
-        let store = SessionStore(session: Session(text: text, comments: [first, last]))
+        // Restored sessions are never saved, which keeps self-tests away from the user's drafts.
+        func reviewing(_ session: Session) -> SessionStore {
+            SessionStore(review: ReviewRequest(source: URL(fileURLWithPath: "方案.md"), output: nil, text: session.text),
+                         restoring: session)
+        }
+        let store = reviewing(Session(text: text, comments: [first, last]))
         store.selection = first.range
         check(!store.canAdd, "exact saved range hides add action")
         store.selection = NSRange(location: 1, length: 2)
@@ -76,33 +69,17 @@ enum SelfTest {
         store.saveDraft()
         check(store.comments.count == 3 && store.comments.first?.body == "已修改", "edit updates existing comment")
 
-        let pasteboard = NSPasteboard.withUniqueName()
-        defer { pasteboard.releaseGlobally() }
-        store.comments.append(Comment(location: 0, length: 1, quote: "第", body: "第四条"))
-        store.general = " 总体意见 "
-        store.copyFeedback(to: pasteboard)
-        check(store.toast == "已复制 4 条批注到剪贴板（含总体意见）", "general opinion does not inflate comment count")
-        check(pasteboard.string(forType: .string) == store.exported, "clipboard keeps exact export format")
-        store.general = " \n"
-        store.copyFeedback(to: pasteboard)
-        check(store.toast == "已复制 4 条批注到剪贴板", "blank general omits suffix")
-        store.comments = []
-        let clipboard = pasteboard.string(forType: .string)
-        let changeCount = pasteboard.changeCount
-        store.copyFeedback(to: pasteboard)
-        check(store.toast == "还没有批注" && pasteboard.changeCount == changeCount
-              && pasteboard.string(forType: .string) == clipboard, "empty export preserves clipboard")
-        store.general = "只导出总体意见"
-        store.copyFeedback(to: pasteboard)
-        check(store.toast == "已复制 0 条批注到剪贴板（含总体意见）"
-              && pasteboard.string(forType: .string) == store.exported, "general-only feedback can be copied")
-
         let trailing = Comment(location: 0, length: 4, quote: "", body: "意见")
         check(!FeedbackExporter.export(text: "第一行\n", comments: [trailing], general: "").contains("   > \n"),
               "selection past a line end leaves no empty quote line")
         check(CommentRanges.trimmed(NSRange(location: 0, length: 6), in: " 第一行\n\n") == NSRange(location: 1, length: 3),
               "new comments trim surrounding whitespace")
         check(CommentRanges.trimmed(NSRange(location: 0, length: 2), in: " \n第") == nil, "whitespace-only selection cannot be commented")
+        check(CommentRanges.trimmed(NSRange(location: 0, length: 6), in: "**粗体**", hidden: IndexSet([0, 1, 4, 5]))
+              == NSRange(location: 2, length: 2), "new comments trim hidden markdown at the edges")
+        let across = Comment(location: 2, length: 6, quote: "", body: "意见")
+        check(FeedbackExporter.export(text: "**粗体**后文", comments: [across], general: "", hidden: IndexSet([0, 1, 4, 5]))
+              .contains("   > 粗体后文\n"), "quotes leave out hidden markdown inside the selection")
 
         // Inline markers sit on the last visible character and never change the text.
         let markerText = "保留重点  \n下一段😀"
@@ -122,7 +99,7 @@ enum SelfTest {
         let hoverText = "前言部分，被批注的原文，结尾"
         let outer = Comment(location: 5, length: 6, quote: "", body: "外层")
         let inner = Comment(location: 8, length: 3, quote: "", body: "内层")
-        let hoverStore = SessionStore(session: Session(text: hoverText, comments: [outer, inner]))
+        let hoverStore = reviewing(Session(text: hoverText, comments: [outer, inner]))
         let editor = EditorContainer(frame: NSRect(x: 0, y: 0, width: 900, height: 400))
         let window = NSWindow(contentRect: editor.frame, styleMask: [.titled], backing: .buffered, defer: true)
         window.contentView = editor
@@ -153,7 +130,7 @@ enum SelfTest {
         check(hoverStore.activeID == nil, "scrolling closes the preview")
 
         // Review mode: the agent gets the export, or an explicit approval when there is nothing to say.
-        let reviewStore = SessionStore(session: Session(text: text))
+        let reviewStore = reviewing(Session(text: text))
         check(!reviewStore.hasFeedback && reviewStore.submission == ReviewRequest.approval, "empty review submits approval")
         reviewStore.general = "范围再收一收"
         check(reviewStore.submission == reviewStore.exported, "general-only review submits the export")

@@ -43,4 +43,9 @@ enum Demo {
         }
         return Session(text: text, comments: comments, general: "请按单人两周可交付的范围重新规划，明确第一版边界与验收步骤。")
     }
+
+    /// A review of the demo plan; submitting prints the feedback to standard output.
+    static var review: ReviewRequest {
+        ReviewRequest(source: URL(fileURLWithPath: "待办 App 开发方案.md"), output: nil, text: session.text)
+    }
 }
