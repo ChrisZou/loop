@@ -22,6 +22,14 @@ enum Theme {
         isDark(appearance) ? NSColor.white.withAlphaComponent(0.1) : NSColor(srgbRed: 20 / 255, green: 30 / 255, blue: 50 / 255, alpha: 0.1)
     }
 
+    /// A table's rules: heavy above and below it, lighter under its header.
+    static let tableRule = NSColor(name: nil) { appearance in
+        isDark(appearance) ? NSColor.white.withAlphaComponent(0.45) : color(0x23272E).withAlphaComponent(0.8)
+    }
+    static let tableHeaderRule = NSColor(name: nil) { appearance in
+        isDark(appearance) ? NSColor.white.withAlphaComponent(0.25) : color(0x23272E).withAlphaComponent(0.4)
+    }
+
     static let sheetWidth: CGFloat = 760
     static let sheetPadding: CGFloat = 84
     /// Gap between the toolbar and the top of the sheet, and below the sheet's end.

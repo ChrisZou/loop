@@ -135,6 +135,85 @@ enum SelfTest {
         coordinator.endHover()
         check(hoverStore.activeID == nil, "scrolling closes the preview")
 
+        // Tables: one NSTextTable cell per markdown cell, while ranges, quotes and copies stay on the markdown.
+        let table = """
+        前言
+        | 周 | 日期 | 备注 |
+        | --- | :---: | ---: |
+        | W0 | 10/21 | **加粗** \\| 竖线 |
+        | W1 | 10/28 |
+
+        后记 | 不是表格
+        """
+        let source = table as NSString
+        let tableStorage = NSTextStorage(string: table)
+        let tableHidden = MarkdownStyler.apply(to: tableStorage, comments: [])
+        let display = tableStorage.string as NSString
+        func cell(_ text: String) -> NSTextTableBlock? {
+            (tableStorage.attribute(.paragraphStyle, at: source.range(of: text).location, effectiveRange: nil) as? NSParagraphStyle)?
+                .textBlocks.first as? NSTextTableBlock
+        }
+        func alignment(_ text: String) -> NSTextAlignment? {
+            (tableStorage.attribute(.paragraphStyle, at: source.range(of: text).location, effectiveRange: nil) as? NSParagraphStyle)?.alignment
+        }
+        check(display.length == source.length, "table swaps keep every index")
+        check(cell("日期").map { ($0.startingRow, $0.startingColumn, $0.table.numberOfColumns) } ?? (-1, -1, -1) == (0, 1, 3)
+              && cell("W1").map { ($0.startingRow, $0.startingColumn) } ?? (-1, -1) == (2, 0),
+              "each markdown cell is its own table cell, the |---| row is not a row")
+        check(alignment("10/21") == .center && alignment("竖线") == .right, "delimiter colons set column alignment")
+        let firstPipe = source.range(of: "周 |").location + 2
+        check(display.character(at: firstPipe) == 0x2029 && tableHidden.contains(firstPipe), "a pipe between cells becomes a paragraph break")
+        let delimiter = source.range(of: "| --- | :---: | ---: |")
+        check(tableHidden.contains(integersIn: delimiter.location..<NSMaxRange(delimiter)), "the |---| row is hidden")
+        let after = source.range(of: "后记 | 不是表格")
+        check(cell("后记") == nil && !tableHidden.contains(after.location + 3), "a pipe line without a header stays text")
+        let fenced = NSTextStorage(string: "```\n| a | b |\n| --- | --- |\n```")
+        MarkdownStyler.apply(to: fenced, comments: [])
+        check((fenced.attribute(.paragraphStyle, at: 5, effectiveRange: nil) as? NSParagraphStyle)?.textBlocks.isEmpty != false,
+              "a table inside a code block stays code")
+        let acrossCells = NSRange(location: source.range(of: "W0").location,
+                                  length: NSMaxRange(source.range(of: "10/21")) - source.range(of: "W0").location)
+        check(CommentRanges.visibleText(of: acrossCells, in: table, hidden: tableHidden) == "W0 | 10/21",
+              "a quote across cells keeps them apart")
+        let escaped = NSRange(location: source.range(of: "**加粗**").location,
+                              length: NSMaxRange(source.range(of: "竖线")) - source.range(of: "**加粗**").location)
+        check(CommentRanges.visibleText(of: escaped, in: table, hidden: tableHidden) == "加粗 | 竖线", "an escaped pipe shows as a pipe")
+
+        let dateComment = Comment(location: source.range(of: "10/21").location, length: 5, quote: "10/21", body: "提前")
+        let tableStore = reviewing(Session(text: table, comments: [dateComment]))
+        tableStore.selection = acrossCells
+        tableStore.addComment()
+        check(tableStore.draft?.quote == "W0 | 10/21", "a new comment across cells quotes both")
+        tableStore.cancelDraft()
+        let tableEditor = EditorContainer(frame: NSRect(x: 0, y: 0, width: 900, height: 500))
+        let tableWindow = NSWindow(contentRect: tableEditor.frame, styleMask: [.titled], backing: .buffered, defer: true)
+        tableWindow.contentView = tableEditor
+        let tableCoordinator = DocumentEditor.Coordinator(tableStore)
+        tableCoordinator.container = tableEditor
+        tableEditor.textView.string = table
+        tableEditor.textView.source = source
+        tableCoordinator.styleIfNeeded()
+        tableEditor.layoutSubtreeIfNeeded()
+        tableCoordinator.layoutMarkers()
+        func tableCenter(of text: String) -> NSPoint {
+            guard let manager = tableEditor.textView.layoutManager, let container = tableEditor.textView.textContainer else { return .zero }
+            let glyphs = manager.glyphRange(forCharacterRange: NSRange(location: source.range(of: text).location, length: 1),
+                                            actualCharacterRange: nil)
+            let rect = manager.boundingRect(forGlyphRange: glyphs, in: container)
+            let origin = tableEditor.textView.textContainerOrigin
+            return NSPoint(x: rect.midX + origin.x, y: rect.midY + origin.y)
+        }
+        let headers = ["周", "日期", "备注"].map(tableCenter)
+        check(abs(headers[0].y - headers[2].y) < 1 && headers[0].x < headers[1].x && headers[1].x < headers[2].x,
+              "a row's cells sit side by side")
+        tableCoordinator.hoverText(at: tableCenter(of: "10/21"))
+        check(tableStore.activeID == dateComment.id, "hovering a commented cell previews its comment")
+        tableEditor.textView.setSelectedRange(acrossCells)
+        let board = NSPasteboard(name: NSPasteboard.Name("loop-selftest-\(UUID().uuidString)"))
+        _ = tableEditor.textView.writeSelection(to: board, types: [.string])
+        check(board.string(forType: .string) == "W0 | 10/21", "copying cells copies their markdown")
+        board.releaseGlobally()
+
         // Review mode: the agent gets the export, or an explicit approval when there is nothing to say.
         let reviewStore = reviewing(Session(text: text))
         check(!reviewStore.hasFeedback && reviewStore.submission == ReviewRequest.approval, "empty review submits approval")

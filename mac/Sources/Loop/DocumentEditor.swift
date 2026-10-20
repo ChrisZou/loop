@@ -13,6 +13,8 @@ final class PlanTextView: NSTextView {
     var highlights: [Highlight] = [] { didSet { if highlights != oldValue { needsDisplay = true } } }
     /// Horizontal padding between the sheet's edge and the text column.
     var sheetPadding = Theme.sheetPadding
+    /// The plan's markdown. The text view's own string differs where tables swap pipes for paragraph breaks.
+    var source: NSString?
     private var hoverArea: NSTrackingArea?
     private var resizing = false
 
@@ -26,6 +28,14 @@ final class PlanTextView: NSTextView {
 
     override func scrollToVisible(_ rect: NSRect) -> Bool {
         resizing ? false : super.scrollToVisible(rect)
+    }
+
+    /// Copying hands out the plan's markdown, pipes included.
+    override func writeSelection(to pboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
+        guard let source, source.length == (string as NSString).length else { return super.writeSelection(to: pboard, types: types) }
+        let text = selectedRanges.map { source.substring(with: $0.rangeValue) }.joined(separator: "\n")
+        pboard.clearContents()
+        return pboard.setString(text, forType: .string)
     }
 
     func trackHover() {
@@ -252,6 +262,9 @@ final class EditorContainer: NSView {
     var onLayout: (() -> Void)?
     var onScroll: (() -> Void)?
     var onSheetLayout: ((SheetLayout) -> Void)?
+    /// The text column's width changed, which reflows tables.
+    var onTextWidth: ((CGFloat) -> Void)?
+    private var textWidth: CGFloat = 0
     var canAdd = false
     private var scrollOrigin = NSPoint.zero
     private var scrollObserver: NSObjectProtocol?
@@ -321,6 +334,7 @@ final class EditorContainer: NSView {
         ) { [weak self] _ in
             self?.onLayout?()
             self?.reportSheet()
+            self?.reportTextWidth()
         }
     }
 
@@ -360,6 +374,14 @@ final class EditorContainer: NSView {
         positionButton()
         onLayout?()
         reportSheet()
+        reportTextWidth()
+    }
+
+    private func reportTextWidth() {
+        let width = textView.textContainer?.size.width ?? 0
+        guard width > 0, width != textWidth else { return }
+        textWidth = width
+        onTextWidth?(width)
     }
 
     /// Measured from what the text view draws, which a legacy scroller can make narrower than planned.
@@ -433,6 +455,7 @@ struct DocumentEditor: NSViewRepresentable {
         let view = EditorContainer(frame: .zero)
         view.textView.delegate = context.coordinator
         view.textView.string = store.text
+        view.textView.source = store.text as NSString
         view.onAdd = { [weak store] in store?.addComment() }
         view.onLayout = { [weak coordinator = context.coordinator] in coordinator?.layoutMarkers() }
         view.onScroll = { [weak coordinator = context.coordinator] in coordinator?.scrolled() }
@@ -441,6 +464,10 @@ struct DocumentEditor: NSViewRepresentable {
             DispatchQueue.main.async { if store?.sheet != layout { store?.sheet = layout } }
         }
         view.textView.onHover = { [weak coordinator = context.coordinator] point in coordinator?.hoverText(at: point) }
+        // After the layout pass that reported it: the text storage can't change mid-layout.
+        view.onTextWidth = { [weak coordinator = context.coordinator] width in
+            DispatchQueue.main.async { coordinator?.refitTables(width) }
+        }
         context.coordinator.container = view
         return view
     }
@@ -472,6 +499,7 @@ struct DocumentEditor: NSViewRepresentable {
         var updating = false
         var lastNavigation: UUID?
         private var styled = false
+        private var fittedWidth: CGFloat = 0
         private var lastComments: [Comment] = []
         private var markers: [UUID: CommentMarker] = [:]
         private var hoveredMarker: UUID?
@@ -641,7 +669,10 @@ struct DocumentEditor: NSViewRepresentable {
                 styled = true
                 lastComments = store.comments
                 let selections = view.selectedRanges
-                MarkdownStyler.apply(to: storage, comments: store.comments)
+                // Before the first layout the container has no width yet; a full sheet's is close.
+                let width = view.textContainer.map(\.size.width).flatMap { $0 > 0 ? $0 : nil } ?? MarkdownStyler.textWidth
+                fittedWidth = width
+                MarkdownStyler.apply(to: storage, source: store.text, comments: store.comments, width: width)
                 view.selectedRanges = selections
             }
             // Inactive first, so an active range paints over the ones it overlaps.
@@ -650,6 +681,17 @@ struct DocumentEditor: NSViewRepresentable {
                 .map { Highlight(range: $0.range, active: $0.id == store.activeID) }
                 .sorted { !$0.active && $1.active }
                 + (store.draft.map { [Highlight(range: $0.range, active: true)] } ?? [])
+        }
+
+        /// A new text width only shares table columns out again; nothing is measured or restyled.
+        func refitTables(_ width: CGFloat) {
+            guard abs(width - fittedWidth) > 0.5, let storage = container?.textView.textStorage else { return }
+            fittedWidth = width
+            guard let range = MarkdownStyler.fitTables(in: storage, width: width) else { return }
+            storage.beginEditing()
+            storage.edited(.editedAttributes, range: range, changeInLength: 0)
+            storage.endEditing()
+            layoutMarkers()
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {

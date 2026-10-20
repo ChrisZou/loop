@@ -66,11 +66,23 @@ enum CommentRanges {
         return end > start ? NSRange(location: start, length: end - start) : nil
     }
 
-    /// The text of a range without the markdown syntax the editor hides.
+    /// The text of a range without the markdown syntax the editor hides. Table cells on one line stay
+    /// apart as `a | b`; rows keep their line breaks.
     static func visibleText(of range: NSRange, in text: String, hidden: IndexSet) -> String {
         let source = text as NSString
         let visible = IndexSet(integersIn: range.location..<NSMaxRange(range)).subtracting(hidden)
-        return visible.rangeView.map { source.substring(with: NSRange(location: $0.lowerBound, length: $0.count)) }.joined()
+        var result = ""
+        var previous: Range<Int>?
+        for run in visible.rangeView {
+            if let previous, previous.upperBound < run.lowerBound,
+               source.substring(with: NSRange(location: previous.upperBound, length: run.lowerBound - previous.upperBound)).contains("|"),
+               source.character(at: previous.upperBound - 1) != 0x0A, source.character(at: run.lowerBound) != 0x0A {
+                result += " | "
+            }
+            result += source.substring(with: NSRange(location: run.lowerBound, length: run.count))
+            previous = run
+        }
+        return result
     }
 
     private static func isSpace(_ unit: unichar) -> Bool {
