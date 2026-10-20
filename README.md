@@ -26,8 +26,3 @@ cd mac && swift build -c release && .build/release/Loop --selftest
 ./build-app.sh
 ln -sf "$PWD/bin/loop" ~/.local/bin/loop
 ```
-
-## 开发计划
-
-- [ ] 附带图片
-- [ ] 总评输入框输入优化
