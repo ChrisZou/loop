@@ -6,7 +6,9 @@ enum FeedbackExporter {
     }
 
     /// Quotes leave out `hidden` markdown syntax, so they read the way the plan looked on screen.
-    static func export(text: String, comments: [Comment], generals: [String], hidden: IndexSet = IndexSet()) -> String {
+    /// `checks` are the task items whose box the reviewer changed, with their new state.
+    static func export(text: String, comments: [Comment], generals: [String], hidden: IndexSet = IndexSet(),
+                       checks: [(text: String, checked: Bool)] = []) -> String {
         let sorted = comments.enumerated().sorted {
             $0.element.location == $1.element.location
                 ? $0.offset < $1.offset : $0.element.location < $1.element.location
@@ -22,6 +24,10 @@ enum FeedbackExporter {
             let quoted = quoteLines.map { "   > " + $0 }.joined(separator: "\n")
             let body = lines(comment.body).joined(separator: "\n   ")
             sections.append("\(index + 1). 原文：\n\(quoted)\n   意见：\(body)")
+        }
+        if !checks.isEmpty {
+            let items = checks.map { "- [\($0.checked ? "x" : " ")] " + lines($0.text).joined(separator: " ") }
+            sections.append((["待办的勾选状态改为："] + items).joined(separator: "\n"))
         }
         let notes = generals.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
         if notes.count == 1 {

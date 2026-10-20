@@ -7,6 +7,8 @@ extension NSAttributedString.Key {
     static let loopBlock = NSAttributedString.Key("LoopBlock")
     /// Inline code, whose rounded background the text view draws centered on the glyphs.
     static let loopInlineCode = NSAttributedString.Key("LoopInlineCode")
+    /// A task item's hidden `[ ]` or `[x]`; the value says whether the plan ticks it.
+    static let loopTask = NSAttributedString.Key("LoopTask")
 }
 
 enum MarkdownStyler {
@@ -16,6 +18,9 @@ enum MarkdownStyler {
     static let bodyFont = NSFont.systemFont(ofSize: 15.5)
     /// Space reserved after a commented range's last character for each inline marker.
     static let markerAdvance: CGFloat = 21
+    /// A task item's checkbox, and the room before its text that holds it.
+    static let taskBox: CGFloat = 14
+    static let taskBoxRoom: CGFloat = 23
     /// Room kerned on each side of inline code for its background.
     static let codePadding: CGFloat = 4
     static var base: [NSAttributedString.Key: Any] {
@@ -99,15 +104,16 @@ enum MarkdownStyler {
         matches("(?m)^(#{1,6})([ \\t]+)(.+)$", text: text) { match in
             guard plain(match.range) else { return }
             let level = match.range(at: 1).length
-            let (font, before, after): (NSFont, CGFloat, CGFloat) =
-                level == 1 ? (Theme.serif(30), 26, 22)
-                : level == 2 ? (Theme.serif(19), 30, 8)
-                : level == 3 ? (Theme.serif(16.5), 20, 6)
-                : (NSFont.systemFont(ofSize: 15.5, weight: .semibold), 16, 4)
+            // No space before: the blank line and the previous paragraph's spacing already set a heading apart.
+            let (font, after): (NSFont, CGFloat) =
+                level == 1 ? (Theme.serif(30), 22)
+                : level == 2 ? (Theme.serif(19), 8)
+                : level == 3 ? (Theme.serif(16.5), 6)
+                : (NSFont.systemFont(ofSize: 15.5, weight: .semibold), 4)
             storage.addAttributes([
                 .font: font,
                 .foregroundColor: Theme.heading,
-                .paragraphStyle: paragraphStyle(before: match.range.location == 0 ? 0 : before, after: after, lineSpacing: 4)
+                .paragraphStyle: paragraphStyle(after: after, lineSpacing: 4)
             ], range: match.range)
             markup(NSRange(location: match.range(at: 1).location,
                            length: match.range(at: 1).length + match.range(at: 2).length))
@@ -127,6 +133,16 @@ enum MarkdownStyler {
             markup(match.range(at: 1))
             markup(match.range(at: 2), .bullet)
             storage.addAttribute(.foregroundColor, value: Theme.secondary, range: match.range(at: 2))
+        }
+        // Task items: `- [ ] ` is hidden, and the text view draws a checkbox in its place.
+        matches("(?m)^([ \\t]*)[-*+][ \\t]+\\[([ xX])\\](?:[ \\t]+|$)", text: text) { match in
+            guard plain(match.range) else { return }
+            let line = (text as NSString).lineRange(for: match.range)
+            let indent = CGFloat(match.range(at: 1).length) * 8 + 6 + taskBoxRoom
+            storage.addAttribute(.paragraphStyle, value: paragraphStyle(after: 6, indent: indent), range: line)
+            markup(match.range)
+            let box = NSRange(location: match.range(at: 2).location - 1, length: 3)
+            storage.addAttribute(.loopTask, value: (text as NSString).substring(with: match.range(at: 2)) != " ", range: box)
         }
         matches("(?m)^([ \\t]*)([0-9]+[.)])([ \\t]+).*$", text: text) { match in
             guard plain(match.range) else { return }
@@ -190,6 +206,17 @@ enum MarkdownStyler {
             measure(table, into: grid, in: storage, hidden: hidden)
             spaceAfter(table, in: storage, text: text as NSString)
         }
+        // A paragraph whose first glyph is null swallows the spacing after the paragraph before it, so a paragraph's
+        // first hidden character becomes a zero-width space instead. Tables take care of their own cells.
+        let lines = text as NSString
+        var lineStart = 0
+        while lineStart < lines.length {
+            if hidden.contains(lineStart), !tableLines.contains(lineStart) {
+                storage.removeAttribute(.loopMarkup, range: NSRange(location: lineStart, length: 1))
+                swaps.append((lineStart, "\u{200B}"))
+            }
+            lineStart = NSMaxRange(lines.lineRange(for: NSRange(location: lineStart, length: 0)))
+        }
         // Same-length swaps keep every index; each new character takes the attributes of the one it replaces.
         for swap in swaps where (storage.string as NSString).substring(with: NSRange(location: swap.index, length: 1)) != swap.character {
             storage.replaceCharacters(in: NSRange(location: swap.index, length: 1), with: swap.character)
@@ -247,7 +274,7 @@ enum MarkdownStyler {
                     var glyphless = IndexSet(integersIn: gap.location..<NSMaxRange(gap))
                     if let separator = cell.separator { glyphless.remove(separator) }
                     // A cell whose first glyph is null throws NSTextTable's layout off (every later cell stacks in
-                    // one column), so the cell's first character becomes a zero-width space instead.
+                    // one column), so the cell's first character becomes a zero-width space instead, as for paragraphs.
                     if gap.location == cell.paragraph.location {
                         glyphless.remove(gap.location)
                         swap(gap.location, "\u{200B}")
@@ -348,6 +375,22 @@ enum MarkdownStyler {
         let style = current.mutableCopy() as! NSMutableParagraphStyle
         style.paragraphSpacingBefore = max(style.paragraphSpacingBefore, 22)
         storage.addAttribute(.paragraphStyle, value: style, range: paragraph)
+    }
+
+    /// The task items in a styled storage, with their text as shown.
+    static func tasks(in storage: NSTextStorage, text: String, hidden: IndexSet) -> [TaskItem] {
+        let source = text as NSString
+        var items: [TaskItem] = []
+        storage.enumerateAttribute(.loopTask, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard let checked = value as? Bool else { return }
+            let line = source.lineRange(for: range)
+            var start = NSMaxRange(range)
+            while start < NSMaxRange(line), hidden.contains(start) { start += 1 }
+            let label = CommentRanges.visibleText(of: NSRange(location: start, length: NSMaxRange(line) - start), in: text, hidden: hidden)
+            items.append(TaskItem(location: range.location, labelStart: start, checked: checked,
+                                  text: label.trimmingCharacters(in: .whitespacesAndNewlines)))
+        }
+        return items
     }
 
     static func markerCounts(_ comments: [Comment], in text: String, hidden: IndexSet = IndexSet()) -> [NSRange: Int] {

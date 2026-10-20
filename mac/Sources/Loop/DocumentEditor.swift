@@ -7,6 +7,14 @@ struct Highlight: Equatable {
     let active: Bool
 }
 
+/// A task item's checkbox as drawn. Boxes the reviewer changed are marked in vermilion, like everything else they mark.
+struct TaskBox: Equatable {
+    let location: Int
+    let labelStart: Int
+    let checked: Bool
+    let changed: Bool
+}
+
 final class PlanTextView: NSTextView {
     /// Mouse position in view coordinates while over the text, nil once it leaves.
     var onHover: ((NSPoint?) -> Void)?
@@ -15,6 +23,9 @@ final class PlanTextView: NSTextView {
     var sheetPadding = Theme.sheetPadding
     /// The plan's markdown. The text view's own string differs where tables swap pipes for paragraph breaks.
     var source: NSString?
+    var taskBoxes: [TaskBox] = [] { didSet { if taskBoxes != oldValue { needsDisplay = true } } }
+    /// A checkbox was clicked; passes its `TaskBox.location`.
+    var onToggleTask: ((Int) -> Void)?
     private var hoverArea: NSTrackingArea?
     private var resizing = false
 
@@ -47,7 +58,37 @@ final class PlanTextView: NSTextView {
 
     override func mouseMoved(with event: NSEvent) {
         super.mouseMoved(with: event)
-        onHover?(convert(event.locationInWindow, from: nil))
+        let point = convert(event.locationInWindow, from: nil)
+        if taskBox(at: point) != nil { NSCursor.pointingHand.set() }
+        onHover?(point)
+    }
+
+    /// A click on a checkbox ticks it instead of starting a selection.
+    override func mouseDown(with event: NSEvent) {
+        if let box = taskBox(at: convert(event.locationInWindow, from: nil)) {
+            onToggleTask?(box.location)
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    func taskBox(at point: NSPoint) -> TaskBox? {
+        taskBoxes.first { taskRect($0)?.insetBy(dx: -5, dy: -5).contains(point) == true }
+    }
+
+    /// The checkbox sits in the room the paragraph indent leaves before the item's text, centered on its first line.
+    func taskRect(_ box: TaskBox) -> NSRect? {
+        guard let manager = layoutManager, let storage = textStorage, storage.length > 0 else { return nil }
+        let index = min(box.labelStart, storage.length - 1)
+        let glyph = manager.glyphIndexForCharacter(at: index)
+        let line = manager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let location = manager.location(forGlyphAt: glyph)
+        let font = storage.attribute(.font, at: index, effectiveRange: nil) as? NSFont ?? MarkdownStyler.bodyFont
+        let size = MarkdownStyler.taskBox
+        let origin = textContainerOrigin
+        let center = origin.y + line.minY + location.y - font.pointSize * 0.36
+        return NSRect(x: origin.x + line.minX + location.x - MarkdownStyler.taskBoxRoom, y: (center - size / 2).rounded(),
+                      width: size, height: size)
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -81,6 +122,33 @@ final class PlanTextView: NSTextView {
         }
         drawInlineCode(in: rect, storage: storage, manager: manager, container: container, origin: origin)
         drawHighlights(in: rect, storage: storage, manager: manager, container: container, origin: origin)
+        drawTasks(in: rect)
+    }
+
+    /// Unticked boxes are a quiet outline and the plan's own ticks are ink; the reviewer's changes are vermilion.
+    private func drawTasks(in rect: NSRect) {
+        for box in taskBoxes {
+            guard let frame = taskRect(box), frame.insetBy(dx: -2, dy: -2).intersects(rect) else { continue }
+            let path = NSBezierPath(roundedRect: frame.insetBy(dx: 0.75, dy: 0.75), xRadius: 3.5, yRadius: 3.5)
+            let pen = box.changed ? Theme.vermilion : Theme.ink
+            guard box.checked else {
+                (box.changed ? pen : Theme.secondary.withAlphaComponent(0.55)).setStroke()
+                path.lineWidth = box.changed ? 1.5 : 1.3
+                path.stroke()
+                continue
+            }
+            pen.setFill()
+            NSBezierPath(roundedRect: frame, xRadius: 3.5, yRadius: 3.5).fill()
+            let tick = NSBezierPath()
+            tick.move(to: NSPoint(x: frame.minX + 3.6, y: frame.minY + 7.3))
+            tick.line(to: NSPoint(x: frame.minX + 6.1, y: frame.minY + 9.8))
+            tick.line(to: NSPoint(x: frame.minX + 10.6, y: frame.minY + 4.6))
+            tick.lineWidth = 1.7
+            tick.lineCapStyle = .round
+            tick.lineJoinStyle = .round
+            (box.changed ? Theme.onVermilion : Theme.sheet).setStroke()
+            tick.stroke()
+        }
     }
 
     /// A rounded background centered on the code's glyphs: equal room above and below, and on both sides.
@@ -456,6 +524,7 @@ struct DocumentEditor: NSViewRepresentable {
         view.textView.delegate = context.coordinator
         view.textView.string = store.text
         view.textView.source = store.text as NSString
+        view.textView.onToggleTask = { [weak store] location in store?.toggleTask(at: location) }
         view.onAdd = { [weak store] in store?.addComment() }
         view.onLayout = { [weak coordinator = context.coordinator] in coordinator?.layoutMarkers() }
         view.onScroll = { [weak coordinator = context.coordinator] in coordinator?.scrolled() }
@@ -681,6 +750,10 @@ struct DocumentEditor: NSViewRepresentable {
                 .map { Highlight(range: $0.range, active: $0.id == store.activeID) }
                 .sorted { !$0.active && $1.active }
                 + (store.draft.map { [Highlight(range: $0.range, active: true)] } ?? [])
+            view.taskBoxes = store.tasks.map {
+                TaskBox(location: $0.location, labelStart: $0.labelStart, checked: store.isChecked($0),
+                        changed: store.toggled.contains($0.location))
+            }
         }
 
         /// A new text width only shares table columns out again; nothing is measured or restyled.

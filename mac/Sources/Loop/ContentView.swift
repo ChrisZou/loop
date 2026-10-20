@@ -46,11 +46,19 @@ struct ContentView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Color(Theme.heading))
                 .lineLimit(1)
-            Text(store.comments.isEmpty ? "审阅中" : "审阅中 · \(store.comments.count) 处批注")
+            Text(status)
                 .font(.system(size: 11.5))
                 .foregroundStyle(Color(Theme.secondary))
                 .monospacedDigit()
         }
+    }
+
+    /// 审阅中 · 3 处批注 · 2 项勾选
+    private var status: String {
+        var parts = ["审阅中"]
+        if !store.comments.isEmpty { parts.append("\(store.comments.count) 处批注") }
+        if !store.toggled.isEmpty { parts.append("\(store.toggled.count) 项勾选") }
+        return parts.joined(separator: " · ")
     }
 
     // 提交 sends the whole review — every comment plus the 总评 — so it sits with the window's actions.

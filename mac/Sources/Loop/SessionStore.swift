@@ -6,6 +6,8 @@ final class SessionStore: ObservableObject {
     /// Saved 总评 notes. The composer below the plan writes a new one into `generalDraft`,
     /// or changes the one at `editingGeneral`.
     @Published var generals: [String] { didSet { scheduleSave() } }
+    /// Task items whose box the reviewer changed, by `TaskItem.location`. Clicking again changes it back.
+    @Published var toggled: Set<Int> { didSet { scheduleSave() } }
     @Published var generalDraft = ""
     @Published var editingGeneral: Int?
     /// The composer has focus, so ⌘↩ saves the 总评 instead of starting a comment.
@@ -24,6 +26,8 @@ final class SessionStore: ObservableObject {
     var text: String { review.text }
     /// Markdown syntax the editor hides; selections never start or end on it and quotes leave it out.
     let hidden: IndexSet
+    /// The plan's `- [ ]` items, in order.
+    let tasks: [TaskItem]
     private(set) var submitted = false
     /// Demo and self-test stores never touch drafts on disk.
     private let persists: Bool
@@ -41,8 +45,11 @@ final class SessionStore: ObservableObject {
             restored = draft
         }
         let text = review.text
-        let hidden = MarkdownStyler.apply(to: NSTextStorage(string: text), comments: [])
+        let styled = NSTextStorage(string: text)
+        let hidden = MarkdownStyler.apply(to: styled, comments: [])
         self.hidden = hidden
+        tasks = MarkdownStyler.tasks(in: styled, text: text, hidden: hidden)
+        toggled = Set(restored.toggled).intersection(tasks.map(\.location))
         comments = restored.comments.filter { CommentRanges.valid($0.range, in: text) }.map {
             var comment = $0
             comment.quote = CommentRanges.visibleText(of: comment.range, in: text, hidden: hidden)
@@ -67,8 +74,20 @@ final class SessionStore: ObservableObject {
         guard draft == nil, let range = CommentRanges.trimmed(selection, in: text, hidden: hidden) else { return false }
         return !comments.contains { $0.range == range }
     }
-    var exported: String { FeedbackExporter.export(text: text, comments: comments, generals: generals, hidden: hidden) }
-    var hasFeedback: Bool { !comments.isEmpty || !generals.isEmpty }
+    var exported: String {
+        FeedbackExporter.export(text: text, comments: comments, generals: generals, hidden: hidden,
+                                checks: changedTasks.map { ($0.text, isChecked($0)) })
+    }
+    var hasFeedback: Bool { !comments.isEmpty || !generals.isEmpty || !toggled.isEmpty }
+
+    /// Ticked on screen: the plan's state, flipped if the reviewer changed it.
+    func isChecked(_ task: TaskItem) -> Bool { task.checked != toggled.contains(task.location) }
+    var changedTasks: [TaskItem] { tasks.filter { toggled.contains($0.location) } }
+
+    func toggleTask(at location: Int) {
+        guard tasks.contains(where: { $0.location == location }) else { return }
+        if toggled.contains(location) { toggled.remove(location) } else { toggled.insert(location) }
+    }
     /// What the reviewing agent receives; submitting with no feedback means the plan is approved.
     var submission: String { hasFeedback ? exported : ReviewRequest.approval }
 
@@ -183,7 +202,7 @@ final class SessionStore: ObservableObject {
     func saveNow() {
         guard persists, !submitted else { return }
         saveWork?.cancel()
-        let session = Session(text: text, comments: comments, generals: generals)
+        let session = Session(text: text, comments: comments, generals: generals, toggled: toggled.sorted())
         let url = review.draftURL
         // Synchronous serial writes guarantee the final quit save is durable and newest.
         do {

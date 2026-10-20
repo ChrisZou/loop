@@ -10,19 +10,34 @@ struct Comment: Identifiable, Codable, Equatable {
     var range: NSRange { NSRange(location: location, length: length) }
 }
 
+/// A `- [ ]` or `- [x]` item in the plan.
+struct TaskItem: Equatable {
+    /// The `[`, which also keys the reviewer's toggles.
+    let location: Int
+    /// Where the item's text starts, after the hidden `- [ ] `.
+    let labelStart: Int
+    /// Ticked in the plan itself.
+    let checked: Bool
+    /// The item's text as shown, for the feedback.
+    let text: String
+}
+
 struct Session: Codable {
     var text = ""
     var comments: [Comment] = []
     /// 总评 notes, in the order they were written.
     var generals: [String] = []
+    /// Task items the reviewer ticked or unticked, by `TaskItem.location`.
+    var toggled: [Int] = []
 
-    init(text: String = "", comments: [Comment] = [], generals: [String] = []) {
+    init(text: String = "", comments: [Comment] = [], generals: [String] = [], toggled: [Int] = []) {
         self.text = text
         self.comments = comments
         self.generals = generals
+        self.toggled = toggled
     }
 
-    private enum CodingKeys: String, CodingKey { case text, comments, generals, general }
+    private enum CodingKeys: String, CodingKey { case text, comments, generals, general, toggled }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -34,6 +49,7 @@ struct Session: Codable {
         } else if let general = try container.decodeIfPresent(String.self, forKey: .general), !general.isEmpty {
             generals = [general]
         }
+        toggled = try container.decodeIfPresent([Int].self, forKey: .toggled) ?? []
     }
 
     func encode(to encoder: Encoder) throws {
@@ -41,6 +57,7 @@ struct Session: Codable {
         try container.encode(text, forKey: .text)
         try container.encode(comments, forKey: .comments)
         try container.encode(generals, forKey: .generals)
+        try container.encode(toggled, forKey: .toggled)
     }
 }
 

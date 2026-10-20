@@ -214,6 +214,56 @@ enum SelfTest {
         check(board.string(forType: .string) == "W0 | 10/21", "copying cells copies their markdown")
         board.releaseGlobally()
 
+        // Task items: the reviewer's ticks are feedback; the plan itself never changes.
+        let todo = "- [ ] 定资金止损线 N\n- [x] 通知厂商\n- [ ] **我来做** 加检查\n后记\n"
+        let todoSource = todo as NSString
+        let todoStore = reviewing(Session(text: todo))
+        check(todoStore.tasks.map(\.text) == ["定资金止损线 N", "通知厂商", "我来做 加检查"]
+              && todoStore.tasks.map(\.checked) == [false, true, false], "task items and their ticks are found")
+        check(todoStore.hidden.contains(integersIn: 0..<6) && !todoStore.hidden.contains(6), "`- [ ] ` is hidden")
+        todoStore.toggleTask(at: todoStore.tasks[0].location)
+        todoStore.toggleTask(at: todoStore.tasks[1].location)
+        check(todoStore.hasFeedback && todoStore.isChecked(todoStore.tasks[0]) && !todoStore.isChecked(todoStore.tasks[1]),
+              "clicking flips a box")
+        check(todoStore.exported == "以下是我对你方案的逐条反馈，请据此修改出下一版：\n\n待办的勾选状态改为：\n- [x] 定资金止损线 N\n- [ ] 通知厂商",
+              "changed ticks are exported with their new state")
+        todoStore.toggleTask(at: todoStore.tasks[1].location)
+        check(todoStore.toggled == [todoStore.tasks[0].location], "clicking again changes a box back")
+        let ticked = Session(text: todo, toggled: [todoStore.tasks[0].location, 1])
+        let reloaded = (try? JSONEncoder().encode(ticked)).flatMap { try? JSONDecoder().decode(Session.self, from: $0) }
+        check(reloaded.map { reviewing($0).toggled } == [todoStore.tasks[0].location], "ticks survive in the draft, stale ones are dropped")
+
+        let todoEditor = EditorContainer(frame: NSRect(x: 0, y: 0, width: 900, height: 400))
+        let todoWindow = NSWindow(contentRect: todoEditor.frame, styleMask: [.titled], backing: .buffered, defer: true)
+        todoWindow.contentView = todoEditor
+        let todoCoordinator = DocumentEditor.Coordinator(todoStore)
+        todoCoordinator.container = todoEditor
+        todoEditor.textView.string = todo
+        todoEditor.textView.onToggleTask = { todoStore.toggleTask(at: $0) }
+        todoCoordinator.styleIfNeeded()
+        todoEditor.layoutSubtreeIfNeeded()
+        if let manager = todoEditor.textView.layoutManager {
+            // The last item is followed by plain text, which never lost its spacing.
+            let heights = ["定资金", "加检查"].map {
+                manager.lineFragmentRect(forGlyphAt: manager.glyphIndexForCharacter(at: todoSource.range(of: $0).location),
+                                         effectiveRange: nil).height
+            }
+            check(heights[0] == heights[1], "an item followed by another keeps its spacing")
+        }
+        let third = todoStore.tasks[2]
+        if let box = todoEditor.textView.taskBoxes.first(where: { $0.location == third.location }),
+           let frame = todoEditor.textView.taskRect(box),
+           let event = NSEvent.mouseEvent(with: .leftMouseDown, location: todoEditor.textView.convert(NSPoint(x: frame.midX, y: frame.midY), to: nil),
+                                          modifierFlags: [], timestamp: 0, windowNumber: todoWindow.windowNumber, context: nil,
+                                          eventNumber: 0, clickCount: 1, pressure: 1),
+           todoEditor.textView.taskBox(at: NSPoint(x: frame.midX, y: frame.midY)) == box {
+            todoEditor.textView.mouseDown(with: event)
+            check(todoStore.isChecked(third), "clicking a checkbox in the editor ticks it")
+            check(todoEditor.textView.taskBox(at: NSPoint(x: frame.maxX + 40, y: frame.midY)) == nil, "the item's text is not the box")
+        } else {
+            check(false, "checkbox is laid out where it can be clicked")
+        }
+
         // Review mode: the agent gets the export, or an explicit approval when there is nothing to say.
         let reviewStore = reviewing(Session(text: text))
         check(!reviewStore.hasFeedback && reviewStore.submission == ReviewRequest.approval, "empty review submits approval")
