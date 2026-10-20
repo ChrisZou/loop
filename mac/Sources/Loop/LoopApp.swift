@@ -33,11 +33,11 @@ struct LoopApp: App {
     var body: some Scene {
         Window("Loop", id: "main") {
             ContentView(store: store)
-                .tint(Color(red: 0.24, green: 0.38, blue: 0.68))
+                .tint(Color(Theme.vermilion))
                 .onAppear { delegate.store = store }
         }
         .defaultSize(width: 1080, height: 800)
-        .windowToolbarStyle(.unified)
+        .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandMenu("批注") {

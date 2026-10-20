@@ -1,10 +1,32 @@
 import SwiftUI
 import AppKit
 
+/// A commented range as the text view paints it: a faint wash with a red-pen underline.
+struct Highlight: Equatable {
+    let range: NSRange
+    let active: Bool
+}
+
 final class PlanTextView: NSTextView {
     /// Mouse position in view coordinates while over the text, nil once it leaves.
     var onHover: ((NSPoint?) -> Void)?
+    var highlights: [Highlight] = [] { didSet { if highlights != oldValue { needsDisplay = true } } }
+    /// Horizontal padding between the sheet's edge and the text column.
+    var sheetPadding = Theme.sheetPadding
     private var hoverArea: NSTrackingArea?
+    private var resizing = false
+
+    /// A width change rewraps the plan; NSTextView would then scroll to keep the (invisible) caret in view,
+    /// which drops the reader somewhere below the top. Reading position stays put instead.
+    override func setFrameSize(_ newSize: NSSize) {
+        resizing = true
+        defer { resizing = false }
+        super.setFrameSize(newSize)
+    }
+
+    override func scrollToVisible(_ rect: NSRect) -> Bool {
+        resizing ? false : super.scrollToVisible(rect)
+    }
 
     func trackHover() {
         let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
@@ -23,11 +45,12 @@ final class PlanTextView: NSTextView {
         if event.trackingArea === hoverArea { onHover?(nil) }
     }
 
-    /// Code cards and quote bars, drawn beneath highlights and text.
+    /// The sheet, code cards, quote bars and comment highlights, all beneath the text.
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
         guard let storage = textStorage, let manager = layoutManager, let container = textContainer else { return }
         let origin = textContainerOrigin
+        drawSheet(in: rect, origin: origin, width: container.size.width)
         storage.enumerateAttribute(.loopBlock, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
             guard let kind = (value as? String).flatMap(MarkdownStyler.Block.init) else { return }
             var used = NSRect.null
@@ -38,21 +61,75 @@ final class PlanTextView: NSTextView {
             guard block.intersects(rect) else { return }
             switch kind {
             case .code:
-                NSColor.labelColor.withAlphaComponent(0.045).setFill()
-                NSBezierPath(roundedRect: block, xRadius: 8, yRadius: 8).fill()
+                Theme.codeBackground.setFill()
+                NSBezierPath(roundedRect: block, xRadius: 6, yRadius: 6).fill()
             case .quote:
-                MarkdownStyler.accent.withAlphaComponent(0.35).setFill()
+                Theme.secondary.withAlphaComponent(0.3).setFill()
                 NSBezierPath(roundedRect: NSRect(x: block.minX + 2, y: block.minY + 2, width: 3, height: block.height - 4),
                              xRadius: 1.5, yRadius: 1.5).fill()
+            }
+        }
+        drawHighlights(in: rect, storage: storage, manager: manager, container: container, origin: origin)
+    }
+
+    private func drawSheet(in rect: NSRect, origin: NSPoint, width: CGFloat) {
+        let sheet = NSRect(x: origin.x - sheetPadding, y: Theme.sheetTop, width: width + sheetPadding * 2,
+                           height: bounds.height - Theme.sheetTop - Theme.sheetBottom)
+        guard sheet.insetBy(dx: -40, dy: -40).intersects(rect) else { return }
+        let path = NSBezierPath(roundedRect: sheet, xRadius: 6, yRadius: 6)
+        NSGraphicsContext.saveGraphicsState()
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor(srgbRed: 20 / 255, green: 30 / 255, blue: 50 / 255, alpha: 0.09)
+        shadow.shadowBlurRadius = 24
+        shadow.shadowOffset = NSSize(width: 0, height: -8)
+        shadow.set()
+        Theme.sheet.setFill()
+        path.fill()
+        NSGraphicsContext.restoreGraphicsState()
+        Theme.rule.withAlphaComponent(0.06).setStroke()
+        path.lineWidth = 1
+        path.stroke()
+    }
+
+    private func drawHighlights(in rect: NSRect, storage: NSTextStorage, manager: NSLayoutManager,
+                                container: NSTextContainer, origin: NSPoint) {
+        for highlight in highlights where CommentRanges.valid(highlight.range, in: storage.string) {
+            let glyphs = manager.glyphRange(forCharacterRange: highlight.range, actualCharacterRange: nil)
+            guard glyphs.length > 0 else { continue }
+            let last = NSMaxRange(glyphs) - 1
+            // The last glyph's advance includes the room kerned for markers; the underline stops before them.
+            let reserved = storage.attribute(.kern, at: manager.characterIndexForGlyph(at: last), effectiveRange: nil) as? CGFloat ?? 0
+            manager.enumerateLineFragments(forGlyphRange: glyphs) { line, used, _, lineGlyphs, _ in
+                let part = NSIntersectionRange(lineGlyphs, glyphs)
+                guard part.length > 0 else { return }
+                let start = manager.location(forGlyphAt: part.location)
+                let endGlyph = NSMaxRange(part) - 1
+                var endX = min(manager.boundingRect(forGlyphRange: NSRange(location: endGlyph, length: 1), in: container).maxX,
+                               used.maxX)
+                if endGlyph == last { endX -= reserved }
+                let startX = line.minX + start.x
+                guard endX > startX else { return }
+                let font = storage.attribute(.font, at: manager.characterIndexForGlyph(at: part.location), effectiveRange: nil) as? NSFont
+                let size = font?.pointSize ?? MarkdownStyler.bodyFont.pointSize
+                let baseline = origin.y + line.minY + start.y
+                let x = origin.x + startX
+                let band = NSRect(x: x - 1, y: baseline - size, width: endX - startX + 2, height: size * 1.3)
+                guard band.intersects(rect) else { return }
+                Theme.vermilion.withAlphaComponent(highlight.active ? 0.13 : 0.06).setFill()
+                NSBezierPath(roundedRect: band, xRadius: 2, yRadius: 2).fill()
+                Theme.vermilion.withAlphaComponent(highlight.active ? 0.95 : 0.65).setFill()
+                NSRect(x: x, y: baseline + size * 0.2, width: endX - startX, height: 2).fill()
             }
         }
     }
 }
 
-/// Numbered badge after a commented range's last character; hover previews the comment, click edits it.
-/// The number matches the item's position in the exported feedback.
+/// A red-pen circled number after a commented range's last character; hover previews the comment,
+/// click edits it. The number matches the item's position in the submitted feedback.
 final class CommentMarker: NSView {
-    static let size: CGFloat = 17
+    /// The frame leaves room around the 16pt badge for the hover ring.
+    static let size: CGFloat = 22
+    static let badge: CGFloat = 16
     let id: UUID
     var active = false { didSet { if active != oldValue { needsDisplay = true } } }
     var number = 0 { didSet { if number != oldValue { needsDisplay = true } } }
@@ -78,23 +155,61 @@ final class CommentMarker: NSView {
     override func accessibilityPerformPress() -> Bool { onPress?(self); return true }
 
     override func draw(_ dirtyRect: NSRect) {
-        let badge = NSBezierPath(ovalIn: bounds.insetBy(dx: 0.5, dy: 0.5))
-        (active ? MarkdownStyler.accent : MarkdownStyler.accent.withAlphaComponent(0.78)).setFill()
-        badge.fill()
+        let badge = NSRect(x: (bounds.width - Self.badge) / 2, y: (bounds.height - Self.badge) / 2,
+                           width: Self.badge, height: Self.badge)
+        if active {
+            Theme.vermilion.withAlphaComponent(0.16).setFill()
+            NSBezierPath(ovalIn: badge.insetBy(dx: -3, dy: -3)).fill()
+        }
+        let circle = NSBezierPath(ovalIn: badge.insetBy(dx: 0.75, dy: 0.75))
+        Theme.sheet.setFill()
+        circle.fill()
+        Theme.vermilion.setStroke()
+        circle.lineWidth = 1.5
+        circle.stroke()
+        let base = NSFont.systemFont(ofSize: number >= 10 ? 8 : 10, weight: .bold)
+        let font = base.fontDescriptor.withDesign(.serif).flatMap { NSFont(descriptor: $0, size: base.pointSize) } ?? base
         let label = "\(number)" as NSString
-        var font = NSFont.systemFont(ofSize: number >= 10 ? 8.5 : 10.5, weight: .bold)
-        if let rounded = font.fontDescriptor.withDesign(.rounded) { font = NSFont(descriptor: rounded, size: font.pointSize) ?? font }
-        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: Theme.vermilion]
         let size = label.size(withAttributes: attributes)
-        label.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2),
-                   withAttributes: attributes)
+        label.draw(at: NSPoint(x: badge.midX - size.width / 2, y: badge.midY - size.height / 2), withAttributes: attributes)
     }
+}
+
+/// The floating 批注 pill above a selection.
+struct AddCommentButton: View {
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: "pencil").font(.system(size: 12, weight: .semibold))
+                Text("批注").fontWeight(.semibold)
+                Text("⌘↩").font(.system(size: 11.5)).opacity(0.75)
+            }
+            .font(.system(size: 12.5))
+            .foregroundStyle(Color(Theme.onVermilion))
+            .padding(.horizontal, 12)
+            .frame(height: 30)
+            .background(Capsule().fill(Color(Theme.vermilion)))
+            .shadow(color: Color(Theme.vermilion).opacity(0.3), radius: 8, y: 4)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("添加批注（⌘↩）")
+        // Room for the shadow inside the hosting view.
+        .padding(AddCommentButton.shadowRoom)
+    }
+
+    static let shadowRoom: CGFloat = 12
 }
 
 final class EditorContainer: NSView {
     let scrollView = NSScrollView()
     let textView: PlanTextView
-    let addButton = NSButton(title: "批注", target: nil, action: nil)
+    let addButton = NSHostingView(rootView: AddCommentButton(action: {}))
+    let previewCard = CardView(rootView: AnyView(EmptyView()))
+    let editorCard = CardView(rootView: AnyView(EmptyView()))
     private let markupDelegate = MarkupLayoutDelegate()
     var onAdd: (() -> Void)?
     var onLayout: (() -> Void)?
@@ -116,7 +231,7 @@ final class EditorContainer: NSView {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = true
-        scrollView.backgroundColor = .textBackgroundColor
+        scrollView.backgroundColor = Theme.ground
         scrollView.borderType = .noBorder
         // The plan is the agent's text: comment on it, don't edit it.
         textView.isRichText = false
@@ -127,9 +242,10 @@ final class EditorContainer: NSView {
         textView.minSize = .zero
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.autoresizingMask = [.width]
-        textView.textContainerInset = NSSize(width: 40, height: 44)
+        textView.textContainerInset = NSSize(width: 40, height: Theme.sheetTop + 58)
         textView.font = MarkdownStyler.bodyFont
-        textView.backgroundColor = .textBackgroundColor
+        textView.backgroundColor = Theme.ground
+        textView.selectedTextAttributes = [.backgroundColor: Theme.selection]
         textView.setAccessibilityLabel("方案正文")
         textView.trackHover()
         container.widthTracksTextView = true
@@ -142,17 +258,15 @@ final class EditorContainer: NSView {
             scrollView.topAnchor.constraint(equalTo: topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
-        addButton.bezelStyle = .push
-        addButton.bezelColor = MarkdownStyler.accent
-        addButton.controlSize = .regular
-        addButton.image = NSImage(systemSymbolName: "text.bubble.fill", accessibilityDescription: nil)
-        addButton.imagePosition = .imageLeading
-        addButton.toolTip = "添加批注（⌘↩）"
-        addButton.target = self
-        addButton.action = #selector(addComment)
+        addButton.rootView = AddCommentButton { [weak self] in self?.onAdd?() }
         addButton.isHidden = true
-        addButton.sizeToFit()
         addSubview(addButton)
+        previewCard.passesClicks = true
+        for card in [previewCard, editorCard] {
+            card.isHidden = true
+            addSubview(card)
+        }
+        clipsToBounds = true
         scrollView.contentView.postsBoundsChangedNotifications = true
         scrollObserver = NotificationCenter.default.addObserver(
             forName: NSView.boundsDidChangeNotification, object: scrollView.contentView, queue: .main
@@ -173,12 +287,11 @@ final class EditorContainer: NSView {
     deinit {
         for observer in [scrollObserver, frameObserver].compactMap({ $0 }) { NotificationCenter.default.removeObserver(observer) }
     }
-    @objc private func addComment() { onAdd?() }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard window != nil else { return }
-        // The toolbar's content inset arrives after the text is laid out; start reading at the very top.
+        // Any toolbar content inset arrives after the text is laid out; start reading at the very top.
         DispatchQueue.main.async { [weak self] in
             guard let clip = self?.scrollView.contentView else { return }
             clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: -clip.contentInsets.top))
@@ -188,12 +301,16 @@ final class EditorContainer: NSView {
 
     override func layout() {
         super.layout()
-        // Center a fixed reading column; wide windows get margins instead of long lines.
-        let inset = max(40, floor((scrollView.contentSize.width - MarkdownStyler.columnWidth) / 2))
-        if textView.textContainerInset.width != inset {
+        // A fixed-width sheet centered on the desk; narrow windows shrink the sheet and its margins.
+        let available = scrollView.contentSize.width
+        let sheet = min(Theme.sheetWidth, available - 48)
+        let padding = min(Theme.sheetPadding, max(28, floor(sheet * 0.11)))
+        let inset = floor((available - sheet) / 2) + padding
+        if textView.textContainerInset.width != inset || textView.sheetPadding != padding {
+            textView.sheetPadding = padding
             textView.textContainerInset = NSSize(width: inset, height: textView.textContainerInset.height)
         }
-        // Keep enough drawable space for the multiline placeholder in an empty document.
+        // The sheet always reaches the bottom of the window, even for a short plan.
         textView.minSize = NSSize(width: 0, height: scrollView.contentSize.height)
         if textView.frame.height < scrollView.contentSize.height {
             textView.setFrameSize(NSSize(width: textView.frame.width, height: scrollView.contentSize.height))
@@ -248,13 +365,14 @@ final class EditorContainer: NSView {
         // This view is unflipped: maxY is the visual top of a line.
         let first = convert(firstLine, from: textView)
         let last = convert(lastLine, from: textView)
-        let width = max(80, addButton.frame.width)
-        let height: CGFloat = 28
+        let size = addButton.fittingSize
+        let room = AddCommentButton.shadowRoom
+        let pill = NSSize(width: size.width - room * 2, height: size.height - room * 2)
         // Centered just above the selection's first line; below its last line when scrolled against the top edge.
         let above = first.maxY + 6
-        let y = above + height <= bounds.height - 4 ? above : max(8, last.minY - height - 6)
-        addButton.frame = NSRect(x: max(8, min(bounds.width - width - 18, first.midX - width / 2)), y: y,
-                                 width: width, height: height)
+        let y = above + pill.height <= bounds.height - 4 ? above : max(8, last.minY - pill.height - 6)
+        let x = max(8, min(bounds.width - pill.width - 18, first.midX - pill.width / 2))
+        addButton.frame = NSRect(x: x - room, y: y - room, width: size.width, height: size.height)
         addButton.isHidden = false
     }
 }
@@ -269,7 +387,7 @@ struct DocumentEditor: NSViewRepresentable {
         view.textView.string = store.text
         view.onAdd = { [weak store] in store?.addComment() }
         view.onLayout = { [weak coordinator = context.coordinator] in coordinator?.layoutMarkers() }
-        view.onScroll = { [weak coordinator = context.coordinator] in coordinator?.endHover() }
+        view.onScroll = { [weak coordinator = context.coordinator] in coordinator?.scrolled() }
         view.textView.onHover = { [weak coordinator = context.coordinator] point in coordinator?.hoverText(at: point) }
         context.coordinator.container = view
         return view
@@ -289,35 +407,28 @@ struct DocumentEditor: NSViewRepresentable {
         view.canAdd = store.canAdd
         view.positionButton()
         coordinator.layoutMarkers()
-        coordinator.syncEditorPopover()
+        coordinator.syncEditorCard()
     }
 
-    final class Coordinator: NSObject, NSTextViewDelegate, NSPopoverDelegate {
+    static func dismantleNSView(_ view: EditorContainer, coordinator: Coordinator) {
+        coordinator.closeCards()
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
         let store: SessionStore
         weak var container: EditorContainer?
         var updating = false
         var lastNavigation: UUID?
         private var styled = false
         private var lastComments: [Comment] = []
-        private var lastActive: UUID?
-        private var lastDraft: Comment?
         private var markers: [UUID: CommentMarker] = [:]
         private var hoveredMarker: UUID?
         private var hoveredText: UUID?
         private var previewID: UUID?
-        private var editorPopoverID: UUID?
-        private let previewPopover: NSPopover = {
-            let popover = NSPopover()
-            popover.behavior = .applicationDefined
-            popover.animates = false
-            return popover
-        }()
-        private lazy var editorPopover: NSPopover = {
-            let popover = NSPopover()
-            popover.behavior = .transient
-            popover.delegate = self
-            return popover
-        }()
+        private var editorID: UUID?
+        private var clickMonitor: Any?
+        private var previewCard: CardView? { container?.previewCard }
+        private var editorCard: CardView? { container?.editorCard }
 
         init(_ store: SessionStore) { self.store = store }
 
@@ -336,9 +447,10 @@ struct DocumentEditor: NSViewRepresentable {
                 let reserved = MarkdownStyler.markerAdvance * CGFloat(counts[marker] ?? 1)
                 let font = storage.attribute(.font, at: marker.location, effectiveRange: nil) as? NSFont ?? MarkdownStyler.bodyFont
                 let view = markers[comment.id] ?? makeMarker(comment.id, in: container.textView)
-                // Centered on the middle of CJK glyphs, which sit higher than Latin x-height.
-                view.frame = NSRect(x: rect.maxX - reserved + 2 + CGFloat(slot) * MarkdownStyler.markerAdvance,
-                                    y: baseline - font.pointSize * 0.36 - CommentMarker.size / 2,
+                let slotStart = rect.maxX - reserved + CGFloat(slot) * MarkdownStyler.markerAdvance
+                // Raised like a footnote mark, centered in the room kerned for it.
+                view.frame = NSRect(x: slotStart + (MarkdownStyler.markerAdvance - CommentMarker.size) / 2 + 1,
+                                    y: baseline - font.pointSize * 0.62 - CommentMarker.size / 2,
                                     width: CommentMarker.size, height: CommentMarker.size).integral
                 view.number = index + 1
                 view.active = store.activeID == comment.id
@@ -349,6 +461,7 @@ struct DocumentEditor: NSViewRepresentable {
                 marker.removeFromSuperview()
                 markers[id] = nil
             }
+            placeCards()
         }
 
         private func makeMarker(_ id: UUID, in textView: NSTextView) -> CommentMarker {
@@ -358,6 +471,12 @@ struct DocumentEditor: NSViewRepresentable {
             textView.addSubview(marker)
             markers[id] = marker
             return marker
+        }
+
+        /// The comment's position in the submitted feedback; a new draft counts where it will land.
+        private func number(of comment: Comment) -> Int {
+            if let index = store.sortedComments.firstIndex(where: { $0.id == comment.id }) { return index + 1 }
+            return store.comments.filter { $0.location <= comment.location }.count + 1
         }
 
         private func hover(_ marker: CommentMarker, _ inside: Bool) {
@@ -380,90 +499,105 @@ struct DocumentEditor: NSViewRepresentable {
             updatePreview()
         }
 
+        func scrolled() {
+            endHover()
+            placeCards()
+        }
+
         private func updatePreview() {
             let id = store.draft == nil ? hoveredMarker ?? hoveredText : nil
             guard id != previewID else { return }
             if let old = previewID {
-                previewPopover.close()
+                previewCard?.dismiss()
                 previewID = nil
                 if store.draft == nil && store.activeID == old { store.activeID = nil }
             }
             guard let id, let comment = store.comments.first(where: { $0.id == id }),
                   let textView = container?.textView, let marker = markers[id] else { return }
-            let host = NSHostingController(rootView: CommentPreview(comment: comment))
-            host.sizingOptions = .preferredContentSize
-            previewPopover.contentViewController = host
-            previewPopover.show(relativeTo: marker.frame, of: textView, preferredEdge: .maxY)
+            previewCard?.show(CommentPreview(comment: comment, number: number(of: comment)), below: marker.frame, in: textView)
             previewID = id
             store.activeID = id
         }
 
         private func press(_ marker: CommentMarker) {
-            previewPopover.close()
+            previewCard?.dismiss()
             previewID = nil
             guard let comment = store.comments.first(where: { $0.id == marker.id }) else { return }
             if store.draft?.id == comment.id { return }
             store.edit(comment)
         }
 
-        func syncEditorPopover() {
+        /// Where the editor card hangs: under the comment's marker, or under the end of a new selection.
+        private func editorAnchor(for draft: Comment) -> NSRect? {
+            if let marker = markers[draft.id] { return marker.frame }
+            return container?.markerPlacement(for: draft.range, hidden: store.hidden)?.rect
+        }
+
+        private func placeCards() {
+            guard let textView = container?.textView else { return }
+            if let id = editorID, let draft = store.draft, draft.id == id, let anchor = editorAnchor(for: draft) {
+                editorCard?.place(below: anchor, in: textView)
+            }
+        }
+
+        func syncEditorCard() {
             guard let container else { return }
             guard let draft = store.draft else {
-                if editorPopover.isShown { editorPopoverID = nil; editorPopover.close() }
+                if editorID != nil { closeEditor() }
                 return
             }
-            if previewID != nil { previewPopover.close(); previewID = nil }
-            if editorPopover.isShown && editorPopoverID == draft.id { return }
-            if editorPopover.isShown { editorPopoverID = nil; editorPopover.close() }
+            if previewID != nil { previewCard?.dismiss(); previewID = nil }
+            if editorID == draft.id { return }
+            guard let anchor = editorAnchor(for: draft) else { return }
             // A fresh editor per comment so focus and scroll state never carry over.
-            let host = NSHostingController(rootView: CommentEditorPopover(store: store))
-            host.sizingOptions = .preferredContentSize
-            editorPopover.contentViewController = host
-            // Anchored to the text view (not the marker) so the popover joins its accessibility tree.
-            if let marker = markers[draft.id] {
-                editorPopoverID = draft.id
-                editorPopover.show(relativeTo: marker.frame, of: container.textView, preferredEdge: .maxY)
-            } else if let (rect, _) = container.markerPlacement(for: draft.range, hidden: store.hidden) {
-                editorPopoverID = draft.id
-                editorPopover.show(relativeTo: rect, of: container.textView, preferredEdge: .maxY)
-            }
-            // A popover opened from a shortcut stays non-key; typing must go straight into the comment.
-            DispatchQueue.main.async { [weak host] in
-                guard let view = host?.view, let window = view.window else { return }
-                window.makeKey()
-                if !(window.firstResponder is NSTextView), let editor = Self.firstTextView(in: view) {
-                    window.makeFirstResponder(editor)
-                }
+            editorID = draft.id
+            container.editorCard.show(CommentEditorCard(store: store, number: number(of: draft)), below: anchor, in: container.textView)
+            container.editorCard.focusFirstTextView()
+            watchOutsideClicks()
+        }
+
+        /// Clicking anywhere outside the editor keeps what was typed; Esc and 取消 discard explicitly.
+        private func watchOutsideClicks() {
+            guard clickMonitor == nil else { return }
+            clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+                guard let self, self.editorCard?.contains(windowPoint: event.locationInWindow) != true || event.window !== self.container?.window,
+                      let id = self.editorID, self.store.draft?.id == id else { return event }
+                if self.store.draftBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { self.store.cancelDraft() }
+                else { self.store.saveDraft() }
+                return event
             }
         }
 
-        private static func firstTextView(in view: NSView) -> NSTextView? {
-            if let text = view as? NSTextView, text.isEditable { return text }
-            for subview in view.subviews { if let text = firstTextView(in: subview) { return text } }
-            return nil
+        private func closeEditor() {
+            editorID = nil
+            if let monitor = clickMonitor { NSEvent.removeMonitor(monitor) }
+            clickMonitor = nil
+            let typing = (container?.window?.firstResponder as? NSView).map { view in editorCard.map(view.isDescendant(of:)) ?? false } ?? false
+            editorCard?.dismiss()
+            // Hand the keyboard back to the plan, so ⌘↩ and selection keys keep working.
+            if typing, let textView = container?.textView { textView.window?.makeFirstResponder(textView) }
         }
 
-        func popoverDidClose(_ notification: Notification) {
-            guard let id = editorPopoverID else { return }
-            editorPopoverID = nil
-            // Clicking elsewhere keeps what was typed; Esc and 取消 discard explicitly.
-            DispatchQueue.main.async { [store] in
-                guard store.draft?.id == id else { return }
-                if store.draftBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { store.cancelDraft() }
-                else { store.saveDraft() }
-            }
+        func closeCards() {
+            previewCard?.dismiss()
+            closeEditor()
         }
 
         func styleIfNeeded() {
             guard let view = container?.textView, let storage = view.textStorage else { return }
-            guard !styled || lastComments != store.comments || lastActive != store.activeID || lastDraft != store.draft else { return }
-            styled = true
-            lastComments = store.comments
-            lastActive = store.activeID
-            lastDraft = store.draft
-            let selections = view.selectedRanges
-            MarkdownStyler.apply(to: storage, comments: store.comments, activeID: store.activeID, draft: store.draft)
-            view.selectedRanges = selections
+            if !styled || lastComments != store.comments {
+                styled = true
+                lastComments = store.comments
+                let selections = view.selectedRanges
+                MarkdownStyler.apply(to: storage, comments: store.comments)
+                view.selectedRanges = selections
+            }
+            // Inactive first, so an active range paints over the ones it overlaps.
+            let draftID = store.draft?.id
+            view.highlights = store.comments.filter { $0.id != draftID }
+                .map { Highlight(range: $0.range, active: $0.id == store.activeID) }
+                .sorted { !$0.active && $1.active }
+                + (store.draft.map { [Highlight(range: $0.range, active: true)] } ?? [])
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {

@@ -11,19 +11,15 @@ enum MarkdownStyler {
     enum Markup: String { case hidden, bullet }
     enum Block: String { case code, quote }
 
-    static let bodyFont = NSFont.systemFont(ofSize: 16)
-    static let accent = NSColor(srgbRed: 0.24, green: 0.38, blue: 0.68, alpha: 1)
+    static let bodyFont = NSFont.systemFont(ofSize: 15.5)
     /// Space reserved after a commented range's last character for each inline marker.
     static let markerAdvance: CGFloat = 21
-    /// Reading column; wider windows get centered margins instead of longer lines.
-    static let columnWidth: CGFloat = 700
-    static var paragraph: NSParagraphStyle { paragraphStyle() }
     static var base: [NSAttributedString.Key: Any] {
-        [.font: bodyFont, .foregroundColor: NSColor.labelColor, .paragraphStyle: paragraph]
+        [.font: bodyFont, .foregroundColor: Theme.ink, .paragraphStyle: paragraphStyle()]
     }
 
-    private static func paragraphStyle(before: CGFloat = 0, after: CGFloat = 10, indent: CGFloat = 0,
-                                       firstLine: CGFloat? = nil, tail: CGFloat = 0, lineSpacing: CGFloat = 7,
+    private static func paragraphStyle(before: CGFloat = 0, after: CGFloat = 12, indent: CGFloat = 0,
+                                       firstLine: CGFloat? = nil, tail: CGFloat = 0, lineSpacing: CGFloat = 8,
                                        lineHeight: CGFloat? = nil) -> NSParagraphStyle {
         let style = NSMutableParagraphStyle()
         style.lineSpacing = lineSpacing
@@ -40,8 +36,9 @@ enum MarkdownStyler {
     }
 
     /// Styles the text with attributes only, so comment ranges stay valid. Returns the hidden character indexes.
+    /// Comment highlights are drawn by the text view; here comments only reserve room for their markers.
     @discardableResult
-    static func apply(to storage: NSTextStorage, comments: [Comment], activeID: UUID?, draft: Comment?) -> IndexSet {
+    static func apply(to storage: NSTextStorage, comments: [Comment]) -> IndexSet {
         let text = storage.string
         let full = NSRange(location: 0, length: storage.length)
         var hidden = IndexSet()
@@ -60,8 +57,9 @@ enum MarkdownStyler {
         matches("(?ms)^(```[^\\n]*\\n)(.*?)^(```)[ \\t]*$", text: text) { match in
             code.insert(integersIn: match.range.location..<NSMaxRange(match.range))
             storage.addAttributes([
-                .font: NSFont.monospacedSystemFont(ofSize: 13.5, weight: .regular),
-                .paragraphStyle: paragraphStyle(after: 0, indent: 16, tail: -16, lineSpacing: 4),
+                .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular),
+                .foregroundColor: Theme.codeText,
+                .paragraphStyle: paragraphStyle(after: 0, indent: 18, tail: -18, lineSpacing: 5),
                 .loopBlock: Block.code.rawValue
             ], range: match.range)
             for (index, fence) in [match.range(at: 1), match.range(at: 3)].enumerated() {
@@ -81,14 +79,24 @@ enum MarkdownStyler {
         matches("(?m)^(#{1,6})([ \\t]+)(.+)$", text: text) { match in
             guard outsideCode(match.range) else { return }
             let level = match.range(at: 1).length
-            let (size, weight, before): (CGFloat, NSFont.Weight, CGFloat) =
-                level == 1 ? (28, .bold, 6) : level == 2 ? (21, .semibold, 30) : (17.5, .semibold, 18)
+            let (font, before, after): (NSFont, CGFloat, CGFloat) =
+                level == 1 ? (Theme.serif(30), 26, 22)
+                : level == 2 ? (Theme.serif(19), 30, 8)
+                : level == 3 ? (Theme.serif(16.5), 20, 6)
+                : (NSFont.systemFont(ofSize: 15.5, weight: .semibold), 16, 4)
             storage.addAttributes([
-                .font: NSFont.systemFont(ofSize: size, weight: weight),
-                .paragraphStyle: paragraphStyle(before: match.range.location == 0 ? 0 : before, after: level == 1 ? 14 : 8)
+                .font: font,
+                .foregroundColor: Theme.heading,
+                .paragraphStyle: paragraphStyle(before: match.range.location == 0 ? 0 : before, after: after, lineSpacing: 4)
             ], range: match.range)
             markup(NSRange(location: match.range(at: 1).location,
                            length: match.range(at: 1).length + match.range(at: 2).length))
+            // Section numbers are marked in red, like a corrected paper.
+            let content = match.range(at: 3)
+            if let number = try? NSRegularExpression(pattern: "^(?:\\d+(?:\\.\\d+)*[.、)]?|[一二三四五六七八九十]+[、.．])"),
+               let found = number.firstMatch(in: text, range: content) {
+                storage.addAttribute(.foregroundColor, value: Theme.vermilion, range: found.range)
+            }
         }
         let bulletWidth = (("• " as NSString).size(withAttributes: [.font: bodyFont])).width
         matches("(?m)^([ \\t]*)([-*+])([ \\t]+).*$", text: text) { match in
@@ -98,6 +106,7 @@ enum MarkdownStyler {
                                                                        firstLine: nesting + 6), range: match.range)
             markup(match.range(at: 1))
             markup(match.range(at: 2), .bullet)
+            storage.addAttribute(.foregroundColor, value: Theme.secondary, range: match.range(at: 2))
         }
         matches("(?m)^([ \\t]*)([0-9]+[.)])([ \\t]+).*$", text: text) { match in
             guard outsideCode(match.range) else { return }
@@ -107,12 +116,12 @@ enum MarkdownStyler {
             let nesting = CGFloat(match.range(at: 1).length) * 8
             storage.addAttribute(.paragraphStyle, value: paragraphStyle(after: 6, indent: nesting + 6 + width,
                                                                        firstLine: nesting + 6), range: match.range)
-            storage.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: match.range(at: 2))
+            storage.addAttribute(.foregroundColor, value: Theme.secondary, range: match.range(at: 2))
             markup(match.range(at: 1))
         }
         matches("(?m)^(>[ \\t]?)(.*)$", text: text) { match in
             guard outsideCode(match.range) else { return }
-            storage.addAttributes([.foregroundColor: NSColor.secondaryLabelColor,
+            storage.addAttributes([.foregroundColor: Theme.secondary,
                                    .paragraphStyle: paragraphStyle(indent: 18),
                                    .loopBlock: Block.quote.rawValue], range: match.range)
             markup(match.range(at: 1))
@@ -121,9 +130,9 @@ enum MarkdownStyler {
             guard outsideCode(match.range) else { return }
             spans.insert(integersIn: match.range.location..<NSMaxRange(match.range))
             storage.addAttributes([
-                .font: NSFont.monospacedSystemFont(ofSize: 14, weight: .regular),
-                .foregroundColor: NSColor.systemIndigo,
-                .backgroundColor: NSColor.quaternaryLabelColor.withAlphaComponent(0.12)
+                .font: NSFont.monospacedSystemFont(ofSize: 13.5, weight: .regular),
+                .foregroundColor: Theme.codeText,
+                .backgroundColor: Theme.codeBackground
             ], range: match.range(at: 2))
             markup(match.range(at: 1))
             markup(match.range(at: 3))
@@ -137,22 +146,13 @@ enum MarkdownStyler {
             let inner = match.range(at: 2)
             storage.enumerateAttribute(.font, in: inner) { value, range, _ in
                 let font = value as? NSFont ?? bodyFont
-                storage.addAttribute(.font, value: NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask), range: range)
+                let bold = NSFont(descriptor: font.fontDescriptor.withSymbolicTraits(.bold), size: font.pointSize) ?? font
+                storage.addAttribute(.font, value: bold, range: range)
             }
             markup(match.range(at: 1))
             markup(match.range(at: 3))
         }
 
-        // Paint inactive ranges first so overlapping active ranges remain visible.
-        let ranges = comments.filter { $0.id != activeID && $0.id != draft?.id }
-            + comments.filter { $0.id == activeID && $0.id != draft?.id }
-            + (draft.map { [$0] } ?? [])
-        for comment in ranges where CommentRanges.valid(comment.range, in: text) {
-            let active = comment.id == activeID
-            storage.addAttribute(.backgroundColor,
-                                 value: NSColor.systemYellow.withAlphaComponent(active ? 0.42 : 0.2),
-                                 range: comment.range)
-        }
         // Kerning makes room for markers without inserting characters, so ranges stay valid.
         for (marker, count) in markerCounts(comments, in: text, hidden: hidden) {
             storage.addAttribute(.kern, value: markerAdvance * CGFloat(count), range: marker)

@@ -5,7 +5,7 @@
 | 目录 | 形态 | 说明 |
 | --- | --- | --- |
 | [`web/`](web/README.md) | 纯静态网页（Vite + TypeScript） | 移动端优先，主要在 iPhone Safari 上使用，桌面浏览器同样可用；会话存在 localStorage |
-| [`mac/`](mac/README.md) | 原生 SwiftUI macOS App | 只做审阅：AI 用 `loop review` 发起，提交后反馈自动回传；居中阅读栏、隐藏 Markdown 符号；行内批注（原文高亮 + 末尾序号圆标，悬停看、点击改） |
+| [`mac/`](mac/README.md) | 原生 SwiftUI macOS App | 只做审阅：AI 用 `loop review` 发起，提交后反馈自动回传；「红笔批改」风格（白纸、衬线标题、隐藏 Markdown 符号）；行内批注（朱红下划线 + 末尾圈码，悬停看、点击改） |
 
 两端互相独立，不共享数据。构建、运行和限制见各自的 README。
 

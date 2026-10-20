@@ -33,7 +33,7 @@ final class SessionStore: ObservableObject {
             restored = draft
         }
         let text = review.text
-        let hidden = MarkdownStyler.apply(to: NSTextStorage(string: text), comments: [], activeID: nil, draft: nil)
+        let hidden = MarkdownStyler.apply(to: NSTextStorage(string: text), comments: [])
         self.hidden = hidden
         comments = restored.comments.filter { CommentRanges.valid($0.range, in: text) }.map {
             var comment = $0
@@ -41,6 +41,17 @@ final class SessionStore: ObservableObject {
             return comment
         }
         general = restored.general
+    }
+
+    /// The plan's first top-level heading, else its file name.
+    var documentTitle: String {
+        let heading = try? NSRegularExpression(pattern: "(?m)^#[ \\t]+(.+)$")
+        if let match = heading?.firstMatch(in: text, range: NSRange(location: 0, length: (text as NSString).length)) {
+            let title = CommentRanges.visibleText(of: match.range(at: 1), in: text, hidden: hidden)
+                .trimmingCharacters(in: .whitespaces)
+            if !title.isEmpty { return title }
+        }
+        return review.source.deletingPathExtension().lastPathComponent
     }
 
     var sortedComments: [Comment] { comments.sorted { $0.location < $1.location } }
