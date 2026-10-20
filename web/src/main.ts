@@ -1,427 +1,150 @@
-import './style.css'
-import { renderMarkdown, sample } from './markdown'
-import { selectionAnchor, rangeFromOffsets, reanchor, wrapHighlights } from './anchor'
-import type { Anchor } from './anchor'
-import { formatFeedback, sortFeedback } from './export'
-import type { Feedback } from './export'
-import { emptySession, loadSession, saveSession } from './store'
+import './style.css';
+import {renderMarkdown,canonicalText,rangeOffsets,paintAnnotations,overlaps,validateWebhook,makePayload, type Annotation,type Agent} from './core';
+const sample=`# 让每一轮反馈，都更进一步
 
-const icons = {
-  plus: '<path d="M12 5v14M5 12h14"/>',
-  edit: '<path d="m16 3 5 5-12 12H4v-5L16 3Z"/><path d="m13 6 5 5"/>',
-  trash: '<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/>',
-  eye: '<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
-  arrow: '<path d="M7 17 17 7M7 7h10v10"/>',
-  close: '<path d="m6 6 12 12M6 18 18 6"/>',
-  comment: '<path d="M21 11a9 9 0 0 1-9 9H4l-3 2 2-7a9 9 0 1 1 18-4Z"/>',
-}
-function icon(name: keyof typeof icons): string {
-  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name]}</svg>`
-}
-function get<T extends HTMLElement>(selector: string): T {
-  const element = document.querySelector<T>(selector)
-  if (!element) throw new Error(`Missing element: ${selector}`)
-  return element
-}
+这是你的审阅空间。**选中任何一段文字**，把具体想法留在原文旁边。完成后，将反馈送回你的 Agent。
 
-get('#app').innerHTML = `
-  <header class="topbar">
-    <div class="brand"><span class="brand-symbol" aria-hidden="true">∞</span><div><h1>Loop</h1><p>人在回路 · 方案批注</p></div></div>
-    <nav aria-label="文档操作">
-      <button id="new" class="icon-button" title="新建" aria-label="新建">${icon('plus')}</button>
-      <button id="edit-source" class="icon-button reading-control" title="编辑原文" aria-label="编辑原文">${icon('edit')}</button>
-      <button id="preview" class="icon-button reading-control" title="预览" aria-label="预览">${icon('eye')}</button>
-      <button id="export" class="primary reading-control">导出反馈${icon('arrow')}</button>
-    </nav>
-  </header>
-  <main>
-    <section id="paste-view" class="paste-view" aria-label="粘贴方案">
-      <div class="paste-heading"><label for="source">方案原文</label><button id="sample" class="text-button">载入示例</button></div>
-      <textarea id="source" placeholder="在这里粘贴 AI 生成的方案…" spellcheck="false"></textarea>
-      <p id="edit-warning" class="warning" hidden>修改原文可能影响批注定位；无法匹配的批注会保留为“未定位”。</p>
-      <div class="paste-footer"><span id="source-count" class="muted"></span><button id="start" class="primary">开始批注${icon('arrow')}</button></div>
-    </section>
-    <div id="read-view" class="workspace" hidden>
-      <article id="article" class="article" aria-label="方案原文"></article>
-      <aside id="panel" class="panel" aria-label="批注列表">
-        <button id="panel-toggle" class="panel-toggle" aria-expanded="false" aria-controls="panel-body"><span class="handle" aria-hidden="true"></span><span id="panel-title">批注 (0)</span><span class="chevron" aria-hidden="true"></span></button>
-        <div id="panel-body" class="panel-body">
-          <ol id="comments" class="comments"></ol>
-          <div class="general"><label for="general">总体意见 <span class="muted">（可选）</span></label><textarea id="general" rows="3" placeholder="补充总体意见…"></textarea></div>
-        </div>
-      </aside>
-    </div>
-  </main>
-  <button id="annotate" class="primary annotate" hidden>${icon('comment')}批注</button>
-  <dialog id="editor" aria-labelledby="editor-title">
-    <form id="editor-form">
-      <div class="dialog-heading"><h2 id="editor-title">添加批注</h2><button type="button" id="editor-close" class="icon-button" aria-label="取消" title="取消">${icon('close')}</button></div>
-      <blockquote id="editor-quote"></blockquote>
-      <label class="sr-only" for="comment-input">批注意见</label><textarea id="comment-input" placeholder="写下你的意见…" rows="5" required autofocus></textarea>
-      <div class="dialog-actions"><button type="button" id="cancel">取消</button><button type="submit" class="primary">保存</button></div>
-    </form>
-  </dialog>
-  <dialog id="export-dialog" aria-labelledby="export-title">
-    <div class="dialog-heading"><h2 id="export-title">反馈预览</h2><button id="export-close" class="icon-button" aria-label="关闭" title="关闭">${icon('close')}</button></div>
-    <label class="sr-only" for="export-text">反馈内容</label><textarea id="export-text" readonly></textarea>
-    <p id="copy-hint" class="muted" hidden>请长按全选后复制</p>
-    <div class="dialog-actions"><button id="copy-preview" class="primary">复制</button></div>
-  </dialog>
-  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
-`
+## 一个更轻盈的工作流
 
-let session = loadSession()
-const source = get<HTMLTextAreaElement>('#source')
-const article = get<HTMLElement>('#article')
-const panel = get<HTMLElement>('#panel')
-const general = get<HTMLTextAreaElement>('#general')
-const annotate = get<HTMLButtonElement>('#annotate')
-const editor = get<HTMLDialogElement>('#editor')
-const commentInput = get<HTMLTextAreaElement>('#comment-input')
-const exportDialog = get<HTMLDialogElement>('#export-dialog')
-const exportText = get<HTMLTextAreaElement>('#export-text')
-const mobile = window.matchMedia('(max-width: 899px)')
-const touch = window.matchMedia('(pointer: coarse)')
-let selected: Anchor | null = null
-let editing: { id: string | null; anchor: Anchor } | null = null
-let activeId: string | null = null
-let selectionTimer = 0
-let toastTimer = 0
-let storageWarningShown = false
-let returnFocus: HTMLElement | null = null
+1. 粘贴 Agent 给出的 Markdown 方案
+2. 选中文字，点击「批注」或按 Alt + Enter
+3. 写下修改建议，提交给下一轮
 
-function toast(message: string): void {
-  const element = get('#toast')
-  element.textContent = message
-  element.hidden = false
-  window.clearTimeout(toastTimer)
-  toastTimer = window.setTimeout(() => { element.hidden = true }, 3000)
-}
-function persist(): void {
-  if (!saveSession(session) && !storageWarningShown) {
-    storageWarningShown = true
-    toast('无法保存到本机，请及时导出反馈')
-  }
-}
-function setPanel(open: boolean): void {
-  panel.classList.toggle('expanded', open)
-  get('#panel-toggle').setAttribute('aria-expanded', String(open || !mobile.matches))
-  get('#panel-body').inert = mobile.matches && !open
-}
-function clearSelection(): void {
-  selected = null
-  annotate.hidden = true
-  window.clearTimeout(selectionTimer)
-  window.getSelection()?.removeAllRanges()
-}
-function renderArticle(): void {
-  renderMarkdown(article, session.source)
-  reanchor(session.comments, article.textContent ?? '')
-  wrapHighlights(article, session.comments)
-}
-function renderList(): void {
-  const list = get<HTMLOListElement>('#comments')
-  list.replaceChildren()
-  const sorted = sortFeedback(session.comments)
-  get('#panel-title').textContent = `批注 (${sorted.length})`
-  sorted.forEach((item, index) => {
-    const li = document.createElement('li')
-    li.className = 'comment-card'
-    li.dataset.id = item.id
-    li.classList.toggle('active', activeId === item.id)
-    const jump = document.createElement('button')
-    jump.className = 'comment-jump'
-    jump.title = item.located ? '定位原文' : '原文未定位'
-    const number = document.createElement('span')
-    number.className = 'comment-number'
-    number.textContent = String(index + 1).padStart(2, '0')
-    const quote = document.createElement('span')
-    quote.className = 'comment-quote'
-    quote.textContent = item.quote
-    jump.append(number, quote)
-    jump.addEventListener('click', () => focusComment(item.id, true))
-    const body = document.createElement('p')
-    body.className = 'comment-text'
-    body.textContent = item.comment
-    const actions = document.createElement('div')
-    actions.className = 'comment-actions'
-    if (!item.located) {
-      const badge = document.createElement('span')
-      badge.className = 'unlocated'
-      badge.textContent = '未定位'
-      actions.append(badge)
-    }
-    const edit = document.createElement('button')
-    edit.className = 'icon-button'
-    edit.title = '编辑批注'
-    edit.setAttribute('aria-label', `编辑第 ${index + 1} 条批注`)
-    edit.innerHTML = icon('edit')
-    edit.addEventListener('click', () => openEditor(item))
-    const remove = document.createElement('button')
-    remove.className = 'icon-button delete-button'
-    remove.title = '删除批注'
-    remove.setAttribute('aria-label', `删除第 ${index + 1} 条批注`)
-    remove.innerHTML = icon('trash')
-    remove.addEventListener('click', () => {
-      if (!window.confirm('删除这条批注？')) return
-      session.comments = session.comments.filter((entry) => entry.id !== item.id)
-      clearSelection()
-      renderArticle()
-      renderList()
-      persist()
-    })
-    actions.append(edit, remove)
-    li.addEventListener('click', (event) => {
-      if (!(event.target as Element).closest('button')) focusComment(item.id, true)
-    })
-    li.append(jump, body, actions)
-    list.append(li)
-  })
-}
-function updateSourceState(): void {
-  get<HTMLButtonElement>('#start').disabled = !source.value.trim()
-  get('#source-count').textContent = source.value.length ? `${source.value.length.toLocaleString()} 字符` : ''
-}
-function renderStep(): void {
-  const reading = session.step === 'read'
-  document.body.classList.toggle('reading', reading)
-  get('#paste-view').hidden = reading
-  get('#read-view').hidden = !reading
-  document.querySelectorAll<HTMLElement>('.reading-control').forEach((control) => { control.hidden = !reading })
-  source.value = session.draft
-  general.value = session.general
-  get('#edit-warning').hidden = !session.comments.length
-  updateSourceState()
-  if (reading) { renderArticle(); renderList() }
-  setPanel(false)
-}
-function focusComment(id: string, scrollArticle: boolean): void {
-  activeId = id
-  clearSelection()
-  const item = session.comments.find((entry) => entry.id === id)
-  if (!item) return
-  const card = Array.from(get('#comments').children).find((node) => (node as HTMLElement).dataset.id === id) as HTMLElement | undefined
-  get('#comments').querySelectorAll<HTMLElement>('.comment-card').forEach((node) => node.classList.toggle('active', node.dataset.id === id))
-  if (scrollArticle && item.located) {
-    if (mobile.matches) setPanel(false)
-    const mark = Array.from(article.querySelectorAll<HTMLElement>('mark.hl')).find((node) => node.dataset.id === id)
-    mark?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' })
-  } else {
-    setPanel(true)
-    if (card) {
-      const scroller = get('#panel-body')
-      scroller.scrollTo({ top: card.offsetTop - 12, behavior: 'smooth' })
-      card.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true })
-    }
-  }
-  article.querySelectorAll<HTMLElement>('mark.hl').forEach((mark) => {
-    if (mark.dataset.id !== id) return
-    mark.classList.remove('flash')
-    void mark.offsetWidth
-    mark.classList.add('flash')
-  })
-}
-function openEditor(item?: Feedback): void {
-  const anchor = item ?? selected
-  if (!anchor) return
-  returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-  editing = { id: item?.id ?? null, anchor: { start: anchor.start, end: anchor.end, quote: anchor.quote } }
-  get('#editor-title').textContent = item ? '编辑批注' : '添加批注'
-  get('#editor-quote').textContent = anchor.quote
-  commentInput.value = item?.comment ?? ''
-  commentInput.setCustomValidity('')
-  clearSelection()
-  editor.showModal()
-  document.body.classList.add('modal-open')
-  // Synchronous focus keeps iOS keyboard activation in the user's tap gesture.
-  commentInput.focus()
-}
-function closeEditor(): void { editor.close() }
-editor.addEventListener('close', () => {
-  editing = null
-  document.body.classList.remove('modal-open')
-  if (returnFocus?.isConnected && returnFocus !== annotate) returnFocus.focus({ preventScroll: true })
-})
-get('#editor-close').addEventListener('click', closeEditor)
-get('#cancel').addEventListener('click', closeEditor)
-get<HTMLFormElement>('#editor-form').addEventListener('submit', (event) => {
-  event.preventDefault()
-  if (!editing) return
-  const comment = commentInput.value.trim()
-  if (!comment) { commentInput.setCustomValidity('请输入批注意见'); commentInput.reportValidity(); return }
-  const existing = session.comments.find((item) => item.id === editing?.id)
-  if (existing) existing.comment = comment
-  else {
-    const id = globalThis.crypto?.randomUUID?.() ?? `comment-${Date.now()}-${Math.random().toString(36).slice(2)}`
-    session.comments.push({ id, ...editing.anchor, comment, located: true })
-    activeId = id
-  }
-  closeEditor()
-  renderArticle()
-  renderList()
-  persist()
-  toast(existing ? '批注已更新' : '批注已保存')
-})
-commentInput.addEventListener('input', () => commentInput.setCustomValidity(''))
-commentInput.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.isComposing) {
-    event.preventDefault()
-    get<HTMLFormElement>('#editor-form').requestSubmit()
-  }
-})
+> 好的反馈从具体的原文开始。无需来回切换，也无需重新解释上下文。
 
-function positionAction(): void {
-  if (!selected) return
-  annotate.classList.toggle('touch-action', touch.matches || mobile.matches)
-  if (touch.matches || mobile.matches) return
-  const range = rangeFromOffsets(article, selected.start, selected.end)
-  if (!range) return
-  const rects = range.getClientRects()
-  const rect = rects[rects.length - 1] ?? range.getBoundingClientRect()
-  annotate.style.left = `${Math.max(12, Math.min(rect.left, window.innerWidth - 112))}px`
-  annotate.style.top = `${Math.max(80, Math.min(rect.bottom + 10, window.innerHeight - 60))}px`
-}
-function captureSelection(): void {
-  if (session.step !== 'read' || editor.open || exportDialog.open) return
-  const anchor = selectionAnchor(article, window.getSelection())
-  window.clearTimeout(selectionTimer)
-  if (anchor) {
-    // Capture immediately; native selection may collapse before the button's click.
-    selected = anchor
-    selectionTimer = window.setTimeout(() => {
-      if (mobile.matches) setPanel(false)
-      annotate.hidden = false
-      positionAction()
-    }, 80)
-  } else selectionTimer = window.setTimeout(() => { annotate.hidden = true }, 180)
-}
-document.addEventListener('selectionchange', captureSelection)
-article.addEventListener('pointerup', captureSelection)
-article.addEventListener('touchend', captureSelection, { passive: true })
-for (const event of ['pointerdown', 'mousedown']) {
-  annotate.addEventListener(event, (e) => { e.preventDefault(); window.clearTimeout(selectionTimer) })
-}
-annotate.addEventListener('click', () => openEditor())
-document.addEventListener('pointerdown', (event) => {
-  const target = event.target as Node
-  if (!article.contains(target) && !annotate.contains(target)) { selected = null; annotate.hidden = true }
-})
-window.addEventListener('scroll', positionAction, { passive: true })
-window.addEventListener('resize', positionAction)
-function activateHighlight(event: MouseEvent | KeyboardEvent): void {
-  const target = (event.target as Element).closest<HTMLElement>('mark.hl')
-  if (!target?.dataset.id) return
-  if (event instanceof KeyboardEvent) {
-    if (event.key !== 'Enter' && event.key !== ' ') return
-    event.preventDefault()
-  } else if (!window.getSelection()?.isCollapsed) return
-  event.preventDefault()
-  focusComment(target.dataset.id, false)
-}
-article.addEventListener('click', activateHighlight)
-article.addEventListener('keydown', activateHighlight)
-get('#panel-toggle').addEventListener('click', () => {
-  if (mobile.matches) setPanel(!panel.classList.contains('expanded'))
-})
-mobile.addEventListener('change', () => setPanel(panel.classList.contains('expanded')))
-let handleY = 0
-get('#panel-toggle').addEventListener('touchstart', (event) => { handleY = event.touches[0]?.clientY ?? 0 }, { passive: true })
-get('#panel-toggle').addEventListener('touchend', (event) => {
-  const delta = (event.changedTouches[0]?.clientY ?? handleY) - handleY
-  if (Math.abs(delta) > 25 && mobile.matches) { event.preventDefault(); setPanel(delta < 0) }
-}, { passive: false })
+## 这次，我们关注什么？
 
-source.addEventListener('input', () => { session.draft = source.value; updateSourceState(); persist() })
-get('#sample').addEventListener('click', () => {
-  if (source.value.trim() && !window.confirm('用示例替换当前输入的原文？')) return
-  source.value = sample
-  session.draft = sample
-  updateSourceState()
-  persist()
-})
-get('#start').addEventListener('click', () => {
-  if (!source.value.trim()) return
-  session.source = source.value
-  session.draft = source.value
-  session.step = 'read'
-  renderStep()
-  persist()
-  window.scrollTo(0, 0)
-})
-get('#edit-source').addEventListener('click', () => {
-  clearSelection()
-  session.step = 'paste'
-  session.draft = session.source
-  renderStep()
-  persist()
-  window.scrollTo(0, 0)
-})
-get('#new').addEventListener('click', () => {
-  if ((session.comments.length || session.general.trim()) && !window.confirm('新建将清空原文和所有批注，确定继续？')) return
-  clearSelection()
-  session = emptySession()
-  activeId = null
-  renderStep()
-  persist()
-  window.scrollTo(0, 0)
-})
-general.addEventListener('input', () => { session.general = general.value; persist() })
+| 方向 | 期待的变化 |
+| --- | --- |
+| 清晰度 | 让每个步骤都能直接行动 |
+| 体验 | 保留必要信息，减少干扰 |
+| 交付 | 让反馈变成下一版的起点 |
 
-function showPreview(manual = false): void {
-  exportText.value = formatFeedback(session.comments, session.general)
-  get('#copy-hint').hidden = !manual
-  if (!exportDialog.open) exportDialog.showModal()
-  document.body.classList.add('modal-open')
-  if (manual) { exportText.focus(); exportText.select(); exportText.setSelectionRange(0, exportText.value.length) }
-}
-function legacyCopy(text: string): boolean {
-  const field = document.createElement('textarea')
-  field.value = text
-  field.readOnly = true
-  field.className = 'clipboard-helper'
-  // A modal makes the rest of the document inert; copy from within it when open.
-  ;(exportDialog.open ? exportDialog : document.body).append(field)
-  const previous = document.activeElement as HTMLElement | null
-  field.focus()
-  field.select()
-  field.setSelectionRange(0, text.length)
-  let success = false
-  try { success = document.execCommand('copy') } catch { /* Manual fallback below. */ }
-  field.remove()
-  previous?.focus({ preventScroll: true })
-  return success
-}
-async function copyFeedback(): Promise<void> {
-  const hasGeneral = Boolean(session.general.trim())
-  if (!session.comments.length && !hasGeneral) { toast('还没有批注'); return }
-  const text = formatFeedback(session.comments, session.general)
-  let copied = false
-  try {
-    if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); copied = true }
-  } catch { /* Try the synchronous legacy API next. */ }
-  if (!copied) copied = legacyCopy(text)
-  if (copied) {
-    if (exportDialog.open) exportDialog.close()
-    toast(`已复制 ${session.comments.length} 条批注${hasGeneral ? '（含总体意见）' : ''}`)
-    get('#copy-hint').hidden = true
-  }
-  else showPreview(true)
-}
-get('#export').addEventListener('click', () => { void copyFeedback() })
-get('#preview').addEventListener('click', () => showPreview())
-get('#copy-preview').addEventListener('click', () => { void copyFeedback() })
-get('#export-close').addEventListener('click', () => exportDialog.close())
-exportDialog.addEventListener('close', () => document.body.classList.remove('modal-open'))
+### 技术约定
 
-// Keep modal actions visible above the iOS software keyboard.
-function syncViewport(): void {
-  const viewport = window.visualViewport
-  document.documentElement.style.setProperty('--viewport-height', `${viewport?.height ?? window.innerHeight}px`)
-  document.documentElement.style.setProperty('--viewport-top', `${viewport?.offsetTop ?? 0}px`)
+\`\`\`json
+{ "status": "ready", "next": "your feedback" }
+\`\`\`
+
+准备好了？选中一句话，开始第一条批注。
+`;
+const demo=(window as Window & {LOOP_DEMO?:boolean}).LOOP_DEMO===true;
+// Keep demo traffic on this origin, including redirects; never forward session capabilities cross-origin.
+const demoTransport:RequestInit={mode:'same-origin',credentials:'same-origin',redirect:'follow',referrerPolicy:'same-origin'};
+const demoAgent:Agent={id:'loop-demo',name:'当前对话收件箱（演示）',webhook:new URL('/api/feedback',location.origin).href};
+interface ReviewContext { reviewId:string; title:string; agentName:string; revision:number; createdAt:string; parentReviewId:string|null }
+interface State { review?:ReviewContext; document:string; annotations:Annotation[]; generalFeedback:string; agents:Agent[]; selected:string }
+const initial:State={document:sample,annotations:[],generalFeedback:'',agents:[],selected:''};
+let state:State=initial;
+try {const saved=JSON.parse(localStorage.getItem('loop.v1')||'null'); if(saved && typeof saved.document==='string' && Array.isArray(saved.annotations)&&Array.isArray(saved.agents)) state={...initial,...saved};}catch{}
+// Validate browser storage as untrusted input, including stale anchor positions.
+state.agents=state.agents.filter((a:any)=>a && typeof a.id==='string' && typeof a.name==='string' && typeof a.webhook==='string');
+if(typeof state.generalFeedback!=='string')state.generalFeedback='';
+if(typeof state.selected!=='string')state.selected='';
+const restored=document.createElement('div');restored.innerHTML=renderMarkdown(state.document);const restoredText=canonicalText(restored);
+const valid:Annotation[]=[];
+for(const a of state.annotations){if(a && typeof a.id==='string' && typeof a.quote==='string' && typeof a.comment==='string' && Number.isInteger(a.start) && Number.isInteger(a.end) && a.start>=0 && a.end>a.start && a.end<=restoredText.length && restoredText.slice(a.start,a.end)===a.quote && !valid.some(b=>b.id===a.id||overlaps(a,b)))valid.push(a);}
+state.annotations=valid;
+if(state.review && (typeof state.review.reviewId!=='string'||typeof state.review.title!=='string'||typeof state.review.agentName!=='string'||!Number.isInteger(state.review.revision)||state.review.revision<1||state.review.revision>1000||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(state.review.reviewId)))delete state.review;
+const linkedMode=demo && (new URL(location.href).searchParams.has('review') || !!state.review);
+if(demo)state.selected=demoAgent.id;
+const availableAgents=()=>demo?[demoAgent,...state.agents.filter(a=>a.id!==demoAgent.id)]:state.agents;
+const keys=new Map<string,string>(); // Keys deliberately live only in this page's memory.
+let pending:ReturnType<typeof rangeOffsets>=null, editingId:string|null=null, submitting=false;
+interface Drafts { markdown:string|null; comment:{ document:string; editingId:string|null; anchor:NonNullable<ReturnType<typeof rangeOffsets>>|null; text:string }|null }
+let drafts:Drafts={markdown:null,comment:null};
+try {const d=JSON.parse(localStorage.getItem('loop.drafts.v1')||'null');if(d){if(typeof d.markdown==='string')drafts.markdown=d.markdown;const c=d.comment;if(c && c.document===state.document && typeof c.text==='string' && (c.editingId===null||state.annotations.some(a=>a.id===c.editingId))){const a=c.anchor;if(c.editingId || (a && Number.isInteger(a.start) && Number.isInteger(a.end) && a.start>=0 && a.end>a.start && restoredText.slice(a.start,a.end)===a.quote))drafts.comment=c;}}}catch{}
+let saveFailed=false;
+type SubmissionPayload=ReturnType<typeof makePayload>&{reviewId?:string;revision?:number};
+let retrySubmission:{fingerprint:string;payload:SubmissionPayload}|null=null;
+try{const r=JSON.parse(localStorage.getItem('loop.pending.v1')||'null');if(r&&typeof r.fingerprint==='string'&&r.payload&&typeof r.payload.submissionId==='string'&&typeof r.payload.submittedAt==='string')retrySubmission=r;}catch{}
+function submissionSnapshot(agent:Agent):SubmissionPayload{
+ const candidate={...makePayload(state.document,state.annotations,state.generalFeedback,agent.name),...(state.review?{reviewId:state.review.reviewId,revision:state.review.revision}:{})};
+ const {submissionId:_,submittedAt:__,...content}=candidate;
+ const fingerprint=JSON.stringify({endpoint:agent.webhook,content});
+ const priorContent=retrySubmission?(({submissionId,submittedAt,...rest})=>rest)(retrySubmission.payload):null;
+ if(retrySubmission?.fingerprint!==fingerprint||JSON.stringify(priorContent)!==JSON.stringify(content))retrySubmission={fingerprint,payload:candidate};
+ // Reuse the entire snapshot, including its timestamp, so backend deduplication is exact.
+ try{localStorage.setItem('loop.pending.v1',JSON.stringify(retrySubmission));}catch{}
+ return retrySubmission.payload;
 }
-window.visualViewport?.addEventListener('resize', syncViewport)
-window.visualViewport?.addEventListener('scroll', syncViewport)
-window.addEventListener('resize', syncViewport)
-syncViewport()
-renderStep()
-if (session.step === 'read') persist()
+function saveDrafts(){try{localStorage.setItem('loop.drafts.v1',JSON.stringify(drafts));}catch{announce('草稿无法保存到此设备，请勿关闭页面。',true);}showDrafts();}
+function showDrafts(){const notice=document.querySelector<HTMLElement>('#draft-notice');if(!notice)return;notice.hidden=drafts.markdown===null&&drafts.comment===null;document.querySelector<HTMLElement>('#restore-markdown')!.hidden=drafts.markdown===null;document.querySelector<HTMLElement>('#restore-comment')!.hidden=drafts.comment===null;}
+function recordCommentDraft(){if(pop.hidden)return;drafts.comment={document:state.document,editingId,anchor:pending?{...pending}:null,text:$<HTMLTextAreaElement>('#comment-input').value};saveDrafts();}
+
+function save(){try{localStorage.setItem('loop.v1',JSON.stringify(state));saveFailed=false;}catch{saveFailed=true;} document.querySelector('#save-state')!.textContent=saveFailed?'存储不可用 · 请勿关闭页面':'';if(saveFailed)announce('存储不可用，请勿关闭页面。',true);}
+const app=document.querySelector<HTMLDivElement>('#app')!;
+app.innerHTML=`<header><a class="brand" href="#" aria-label="Loop 首页"><span class="logo">↻</span> Loop<span class="brand-note">反馈，让想法向前</span></a><div class="header-actions"><button id="new" class="quiet">新建</button><button id="settings" class="quiet">设置</button><div class="submit-group"><select id="agent-select" aria-label="目标 Agent"></select><button id="submit" class="primary">提交 <span>↗</span></button></div></div></header>
+<main><div class="intro"><div><div class="eyebrow">HUMAN IN THE LOOP</div><h1>想法的下一版，从你开始。</h1><p>在原文里留下反馈，让 Agent 接着往前走。</p></div><span class="private-badge">◈ 仅保存在此设备</span></div><div id="review-context" class="review-context" hidden></div><div id="review-load" class="draft-notice" hidden role="status"><span id="review-load-text"></span><button id="retry-review" hidden>重新打开收到的方案</button></div><div id="draft-notice" class="draft-notice" hidden><span>有尚未应用的草稿，已自动保存</span><button id="restore-markdown">继续编辑原文</button><button id="restore-comment">继续编辑批注</button><button id="discard-drafts" class="quiet">放弃草稿</button></div><section class="workspace"><div class="document-toolbar"><div class="tabs"><button id="read-tab" class="active">审阅</button><button id="edit-tab">Markdown</button></div><div class="document-meta"><span id="count">0 条批注</span><span class="separator">·</span><span id="save-state">已自动保存到此设备</span></div></div><div class="reading-hint"><span>⌁</span> 选中文字即可批注 <kbd>Alt ↵</kbd><span class="hint-end">你的思考，留在原处</span></div><article id="document" class="markdown" aria-label="待审阅文档"></article><section id="editor-panel" hidden><label for="markdown-input">粘贴或编辑 Markdown</label><p>修改原文会清除现有批注，以免位置错配。取消编辑可保留原文与批注。</p><textarea id="markdown-input" spellcheck="false"></textarea><div class="editor-actions"><button id="cancel-edit">放弃修改</button><button id="apply-edit" class="primary">应用修改</button></div></section><section class="general"><label for="general-feedback">总体意见</label><textarea id="general-feedback" placeholder="" rows="3"></textarea></section></section><footer><span>Loop · 让反馈回到创作中</span><span>选中 · 批注 · 下一版</span></footer><div id="status" role="status" aria-live="polite"></div></main>
+<button id="selection-action" class="floating primary" hidden>＋ 批注</button>
+<div id="comment-popover" class="popover" hidden role="dialog" aria-label="原文批注"><div class="popover-top"><strong id="comment-title">添加批注</strong><button id="close-comment" aria-label="关闭批注">×</button></div><blockquote id="quote"></blockquote><label for="comment-input" class="sr-only">批注内容</label><textarea id="comment-input" rows="4" placeholder="你希望如何修改？"></textarea><div class="popover-actions"><button id="delete-comment" class="danger" hidden>删除</button><button id="save-comment" class="primary">保存批注</button></div></div>
+<dialog id="settings-dialog"><form id="settings-form"><div class="dialog-head"><div><div class="eyebrow">YOUR AGENTS</div><h2>连接你的 Agent</h2></div><button type="button" id="close-settings" aria-label="关闭设置">×</button></div><p>提交时，将原文与反馈发送到你选择的 Webhook。</p><div id="agent-rows"></div><button type="button" id="add-agent">＋ 添加 Agent</button><div class="security-note">密钥仅保留在当前页面内存中，刷新或关闭后需重新填写。Webhook 地址和名称保存在此设备，请勿将密钥写入 URL。</div><details><summary>连接与 CORS 说明</summary><p>接收端需允许此网页来源的 POST / OPTIONS 请求及 Content-Type、Authorization 请求头。HTTPS 网页访问 localhost HTTP 可能被浏览器拦截。建议使用可信 HTTPS 接口或同源代理。</p><p>只有点击「提交」才会发起请求。HTTP 2xx 表示接口已接收，不代表 Agent 已完成处理。超时后请确认接收端状态，避免重复提交。</p></details><p id="settings-error" role="alert"></p><div class="dialog-actions"><button type="submit" class="primary">保存设置</button></div></form></dialog>`;
+const $=<T extends HTMLElement=HTMLElement>(s:string)=>document.querySelector<T>(s)!;
+if(linkedMode){for(const selector of ['#new','#settings','#agent-select','#edit-tab','#read-tab']){const el=$(selector) as HTMLButtonElement;el.hidden=true;el.disabled=true;}$('.document-toolbar').hidden=true;app.classList.add('linked-review');}
+const doc=$('#document'), action=$<HTMLButtonElement>('#selection-action'), pop=$('#comment-popover');
+function announce(text:string,error=false){$('#status').textContent=text;$('#status').classList.toggle('error',error);}
+function draw(){drawReviewContext();doc.innerHTML=renderMarkdown(state.document);paintAnnotations(doc,state.annotations);doc.querySelectorAll('a').forEach(a=>{a.target='_blank';a.rel='noopener noreferrer';});$('#count').textContent=`${state.annotations.length} 条批注`;}
+function drawAgents(){if(linkedMode)state.selected=demoAgent.id;const agents=availableAgents();const select=$<HTMLSelectElement>('#agent-select');select.replaceChildren();if(!agents.length) select.add(new Option('选择 Agent',''));agents.forEach(a=>select.add(new Option(a.id===demoAgent.id?'当前会话':a.name,a.id))); if(!agents.some(a=>a.id===state.selected))state.selected=agents[0]?.id||'';select.value=state.selected;}
+function closePopover(){pop.hidden=true;editingId=null;pending=null;action.hidden=true;}
+function place(el:HTMLElement, rect:DOMRect){const width=el===pop?Math.min(340,innerWidth-24):100;el.style.left=`${Math.max(12,Math.min(rect.left,innerWidth-width-12))}px`;el.style.top=`${Math.max(12,Math.min(rect.bottom+8,innerHeight-(el===pop?320:48)))}px`;}
+function captureSelection(){if(!pop.hidden)return;const selection=window.getSelection();if(!selection?.rangeCount){action.hidden=true;return;} const r=selection.getRangeAt(0);pending=rangeOffsets(doc,r);if(pending){place(action,r.getBoundingClientRect());action.hidden=false;}else action.hidden=true;}
+document.addEventListener('selectionchange',()=>setTimeout(captureSelection,20));
+action.addEventListener('pointerdown',e=>e.preventDefault());
+function openNew(){if(!pending)return;if(drafts.comment && !confirm('已有未保存的批注草稿。放弃该草稿并为新选区批注吗？'))return;if(state.annotations.some(a=>overlaps(a,pending!))){announce('这段文字已包含批注。请点击已有编号编辑，或选择不重叠的文字。',true);return;}editingId=null;$('#comment-title').textContent='添加批注';$('#quote').textContent=pending.quote;$<HTMLTextAreaElement>('#comment-input').value='';$('#delete-comment').hidden=true;pop.hidden=false;place(pop,action.getBoundingClientRect());action.hidden=true;$<HTMLTextAreaElement>('#comment-input').focus();}
+action.onclick=openNew;
+document.addEventListener('keydown',e=>{if(e.altKey&&e.key==='Enter'){e.preventDefault();if(pop.hidden){captureSelection();openNew();}else saveComment();}if(e.key==='Escape'){recordCommentDraft();closePopover();}});
+function openExisting(id:string,target:HTMLElement,focus=false){if(drafts.comment && drafts.comment.editingId!==id){if(!focus)return;if(!confirm('已有未保存的批注草稿。放弃该草稿并编辑这条批注吗？'))return;}const a=state.annotations.find(a=>a.id===id);if(!a)return;editingId=id;pending=null;$('#comment-title').textContent='编辑批注';$('#quote').textContent=a.quote;$<HTMLTextAreaElement>('#comment-input').value=drafts.comment?.editingId===id?drafts.comment.text:a.comment;$('#delete-comment').hidden=false;pop.hidden=false;action.hidden=true;place(pop,target.getBoundingClientRect());if(focus)$<HTMLTextAreaElement>('#comment-input').focus();}
+doc.addEventListener('click',e=>{const t=(e.target as HTMLElement).closest<HTMLElement>('[data-annotation]');if(t)openExisting(t.dataset.annotation!,t,true);});
+doc.addEventListener('pointerover',e=>{if(e.pointerType==='touch'||!pop.hidden)return;const t=(e.target as HTMLElement).closest<HTMLElement>('[data-marker]');if(t)openExisting(t.dataset.annotation!,t);});
+$('#close-comment').onclick=()=>{recordCommentDraft();closePopover();};
+$('#comment-input').addEventListener('input',recordCommentDraft);
+function saveComment(){const comment=$<HTMLTextAreaElement>('#comment-input').value.trim();if(!comment){announce('请先写下批注内容。',true);return;}if(editingId){state.annotations=state.annotations.map(a=>a.id===editingId?{...a,comment}:a);}else if(pending){state.annotations.push({...pending,id:crypto.randomUUID(),comment});}else return;drafts.comment=null;saveDrafts();closePopover();window.getSelection()?.removeAllRanges();draw();save();announce('');}
+$('#save-comment').onclick=saveComment;
+$('#delete-comment').onclick=()=>{drafts.comment=null;saveDrafts();state.annotations=state.annotations.filter(a=>a.id!==editingId);closePopover();draw();save();announce('');};
+$<HTMLTextAreaElement>('#general-feedback').value=state.generalFeedback;
+$('#general-feedback').addEventListener('input',e=>{state.generalFeedback=(e.target as HTMLTextAreaElement).value;save();});
+$('#agent-select').addEventListener('change',e=>{state.selected=linkedMode?demoAgent.id:(e.target as HTMLSelectElement).value;save();});
+function editor(open:boolean){recordCommentDraft();closePopover();doc.hidden=open;$('#editor-panel').hidden=!open;$('.reading-hint').hidden=open;$('#read-tab').classList.toggle('active',!open);$('#edit-tab').classList.toggle('active',open);if(open)$<HTMLTextAreaElement>('#markdown-input').value=drafts.markdown??state.document;}
+$('#edit-tab').onclick=()=>{if(!linkedMode)editor(true);};$('#read-tab').onclick=()=>editor(false);$('#cancel-edit').onclick=()=>{drafts.markdown=null;saveDrafts();editor(false);};
+$('#markdown-input').addEventListener('input',()=>{drafts.markdown=$<HTMLTextAreaElement>('#markdown-input').value;saveDrafts();});
+$('#apply-edit').onclick=()=>{const next=$<HTMLTextAreaElement>('#markdown-input').value;if(next!==state.document){if(state.annotations.length&&!confirm('应用修改将清除所有原文批注（保留总体意见）。继续吗？'))return;state.document=next;delete state.review;const manualUrl=new URL(location.href);manualUrl.searchParams.delete('review');history.replaceState(null,'',manualUrl);state.annotations=[];drafts.comment=null;save();draw();}drafts.markdown=null;saveDrafts();editor(false);};
+$('#new').onclick=()=>{if(linkedMode)return;if(submitting){announce('正在提交，请等待结果后再新建。',true);return;}if(!confirm('新建会清空当前原文、批注和总体意见。Agent 设置保留。继续吗？'))return;drafts={markdown:null,comment:null};saveDrafts();closePopover();delete state.review;const cleanUrl=new URL(location.href);cleanUrl.searchParams.delete('review');history.replaceState(null,'',cleanUrl);state.document='';state.annotations=[];state.generalFeedback='';$<HTMLTextAreaElement>('#general-feedback').value='';draw();save();editor(true);};
+let draftAgents:Agent[]=[];
+function drawSettings(){const rows=$('#agent-rows');rows.replaceChildren();draftAgents.forEach((a,i)=>{const row=document.createElement('div');row.className='agent-row';row.innerHTML=`<div class="row-heading"><strong>Agent ${i+1}</strong><button type="button" class="remove danger">移除</button></div><label>名称<input class="agent-name" required maxlength="80" placeholder="如：方案助手"></label><label>Webhook URL<input class="agent-url" type="url" required placeholder="https://example.com/feedback"></label><label>密钥 <span>可选 · 仅本次页面</span><input class="agent-key" type="password" autocomplete="off" placeholder="以 Bearer Token 发送"></label>`;row.querySelector<HTMLInputElement>('.agent-name')!.value=a.name;row.querySelector<HTMLInputElement>('.agent-url')!.value=a.webhook;row.querySelector<HTMLInputElement>('.agent-key')!.value=draftKeys.get(a.id)||'';row.querySelector('.remove')!.addEventListener('click',()=>{readSettings();draftAgents.splice(i,1);drawSettings();});rows.append(row);});}
+let draftKeys=new Map<string,string>();
+function readSettings(){[...$('#agent-rows').children].forEach((row,i)=>{draftAgents[i].name=row.querySelector<HTMLInputElement>('.agent-name')!.value.trim();draftAgents[i].webhook=row.querySelector<HTMLInputElement>('.agent-url')!.value.trim();draftKeys.set(draftAgents[i].id,row.querySelector<HTMLInputElement>('.agent-key')!.value);});}
+$('#settings').onclick=()=>{if(linkedMode)return;draftAgents=state.agents.map(a=>({...a}));draftKeys=new Map(keys);$('#settings-error').textContent='';drawSettings();$<HTMLDialogElement>('#settings-dialog').showModal();};
+$('#close-settings').onclick=()=>$<HTMLDialogElement>('#settings-dialog').close();
+$('#add-agent').onclick=()=>{readSettings();draftAgents.push({id:crypto.randomUUID(),name:'',webhook:''});drawSettings();};
+$('#settings-form').onsubmit=e=>{e.preventDefault();readSettings();for(const a of draftAgents){const error=validateWebhook(a.webhook);if(!a.name||error){$('#settings-error').textContent=error||'请输入 Agent 名称';return;}}state.agents=draftAgents.map(a=>({...a}));keys.clear();draftKeys.forEach((v,k)=>{if(state.agents.some(a=>a.id===k))keys.set(k,v);});drawAgents();save();$<HTMLDialogElement>('#settings-dialog').close();announce('Agent 设置已保存。'+(state.agents.some(a=>a.webhook.startsWith('http:'))?' 本机 HTTP 无加密，请仅用于本地调试。':''));};
+$('#submit').onclick=async()=>{if(submitting)return;if(!pop.hidden){announce('请先保存或关闭正在编辑的批注，再提交。',true);return;}if(!$('#editor-panel').hidden){announce('请先应用或取消 Markdown 修改。',true);return;}if(drafts.comment!==null&&drafts.comment.text.trim()!==''&&(!drafts.comment.editingId||drafts.comment.text.trim()!==state.annotations.find(a=>a.id===drafts.comment!.editingId)?.comment)){announce('还有未保存的批注草稿，请点击「继续编辑批注」并保存后再提交。',true);return;}if(drafts.markdown!==null&&drafts.markdown!==state.document){announce('还有未应用的原文草稿，请继续编辑并应用或放弃修改后再提交。',true);return;}const agent=linkedMode?demoAgent:availableAgents().find(a=>a.id===state.selected);if(!agent){$('#settings').click();return;}const invalid=validateWebhook(agent.webhook);if(invalid){announce(invalid,true);return;}if(!state.document.trim()){announce('请先添加需要审阅的 Markdown 原文。',true);return;}if(!state.annotations.length&&!state.generalFeedback.trim()){announce('请至少添加一条批注或总体意见。',true);return;}
+  const payload=submissionSnapshot(agent);const key=keys.get(agent.id);submitting=true;const button=$<HTMLButtonElement>('#submit');button.disabled=true;button.textContent='提交中…';announce('');const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),15000);
+  let stage='建立提交会话';
+  try {const isDemo=demo && agent.id===demoAgent.id && new URL(agent.webhook).origin===location.origin;const demoHeaders:Record<string,string>={};if(isDemo){const sessionResponse=await fetch('/api/session',{...demoTransport,method:'POST',signal:controller.signal});if(!sessionResponse.ok)throw new Error(`演示会话不可用（HTTP ${sessionResponse.status}），可能已过期或达到限额`);const sessionData=await sessionResponse.json();if(typeof sessionData.session!=='string'||!sessionData.session)throw new Error('演示会话响应无效');demoHeaders['X-Loop-Session']=sessionData.session;}stage='发送反馈';const response=await fetch(isDemo?'/api/feedback':agent.webhook,{method:'POST',headers:{'Content-Type':'application/json',...demoHeaders,...(!isDemo&&key?{Authorization:`Bearer ${key}`}:{})},body:JSON.stringify(payload),signal:controller.signal,...(isDemo?demoTransport:{redirect:'error' as const,credentials:'omit' as const,referrerPolicy:'no-referrer' as const})});if(!response.ok)throw new Error(`接收端返回 HTTP ${response.status}`);if(isDemo){stage='核对提交回执';const receipt=await response.json();if(receipt.accepted!==true||receipt.submissionId!==payload.submissionId)throw new Error('提交回执无效，状态未确认');finishSubmission(payload.reviewId??null,receipt.submissionId);}else finishSubmission(payload.reviewId??null,payload.submissionId);}catch(error){const timedOut=controller.signal.aborted;announce(timedOut?'提交超时，接收状态未知。内容已保留，请确认后重试。':`提交未确认（${stage}）：${error instanceof Error?error.message:'网络错误'}。${saveFailed?'内容仍在当前页面，请勿关闭或刷新。':'内容已保留在此设备，可重试。'}`,true);}finally{clearTimeout(timer);submitting=false;button.disabled=false;button.innerHTML='提交 <span>↗</span>';}
+};
+window.addEventListener('resize',()=>{action.hidden=true;});window.addEventListener('scroll',()=>{action.hidden=true;},true);
+$('#restore-markdown').onclick=()=>editor(true);
+$('#restore-comment').onclick=()=>{const c=drafts.comment;if(!c)return;editingId=c.editingId;pending=c.anchor;const a=state.annotations.find(a=>a.id===editingId);$('#quote').textContent=a?.quote||c.anchor?.quote||'';$('#comment-title').textContent=editingId?'继续编辑批注':'继续添加批注';$<HTMLTextAreaElement>('#comment-input').value=c.text;$('#delete-comment').hidden=!editingId;pop.hidden=false;pop.style.left=`${Math.max(12,(innerWidth-340)/2)}px`;pop.style.top='110px';$<HTMLTextAreaElement>('#comment-input').focus();};
+$('#discard-drafts').onclick=()=>{if(!confirm('放弃尚未应用的原文和批注草稿？已保存的原文与批注会保留。'))return;drafts={markdown:null,comment:null};saveDrafts();closePopover();editor(false);};
+if(demo){const warning=document.createElement('p');warning.className='demo-warning';warning.textContent='公开临时演示 · 无需登录，请仅使用虚构测试内容，勿填写隐私或密钥。收到的方案链接可被任何持有链接的人打开；反馈保存在后台，不提供公开读取。原文与批注草稿保存在此浏览器；点击提交后，原文和反馈将提交到当前会话的临时存储，不会自动启动 Agent。演示有效至 2026-10-20 08:30 UTC。';document.querySelector('#settings-dialog details')!.append(warning);document.querySelector('.private-badge')!.textContent='草稿本地 · 提交云端';}
+function drawReviewContext(){const el=$('#review-context');el.hidden=!state.review;if(state.review)el.textContent=`${state.review.title} · 来自 ${state.review.agentName} · 第 ${state.review.revision} 版`;}
+const incomingReview=demo?new URL(location.href).searchParams.get('review'):null;
+let loadingReview=false;
+async function loadIncomingReview(){
+ if(!incomingReview||loadingReview)return;
+ const notice=$('#review-load'),label=$('#review-load-text'),retry=$('#retry-review');notice.hidden=false;retry.hidden=true;
+ if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(incomingReview)){label.textContent='收到的方案链接无效。当前内容未改动。';return;}
+ if(state.review?.reviewId===incomingReview){notice.hidden=true;return;}
+ loadingReview=true;label.textContent='加载中…';const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),15000);
+ try{const response=await fetch(`/api/reviews/${encodeURIComponent(incomingReview)}`,{...demoTransport,signal:controller.signal});if(!response.ok)throw new Error(`HTTP ${response.status}`);const review=await response.json();if(review.reviewId!==incomingReview||typeof review.document!=='string'||review.document.length>30000||typeof review.title!=='string'||typeof review.agentName!=='string'||!Number.isInteger(review.revision)||review.revision<1||review.revision>1000)throw new Error('方案数据无效');
+ if(new URL(location.href).searchParams.get('review')!==incomingReview){notice.hidden=true;return;}
+ const dirty=(state.document!==sample && state.document.trim()!=='')||state.annotations.length>0||state.generalFeedback.trim()!==''||drafts.markdown!==null||drafts.comment!==null||!pop.hidden||!$('#editor-panel').hidden;
+ if(dirty&&!confirm(`打开「${review.title}」第 ${review.revision} 版将替换当前原文、批注、总体意见和草稿。当前内容不会自动发送。是否切换？`)){label.textContent='未切换方案';retry.hidden=false;return;}
+ closePopover();drafts={markdown:null,comment:null};saveDrafts();state.document=review.document;state.annotations=[];state.generalFeedback='';state.review={reviewId:review.reviewId,title:review.title,agentName:review.agentName,revision:review.revision,createdAt:typeof review.createdAt==='string'?review.createdAt:'',parentReviewId:typeof review.parentReviewId==='string'?review.parentReviewId:null};$<HTMLTextAreaElement>('#general-feedback').value='';draw();save();editor(false);notice.hidden=true;
+ }catch(error){label.textContent=`无法加载收到的方案：${controller.signal.aborted?'请求超时':error instanceof Error?error.message:'网络错误'}。当前内容已保留。`;retry.hidden=false;}finally{clearTimeout(timer);loadingReview=false;}
+}
+$('#retry-review').onclick=()=>void loadIncomingReview();
+function finishSubmission(reviewId:string|null,submissionId:string){try{sessionStorage.setItem('loop.completed.v1',JSON.stringify({reviewId,submissionId}));}catch{}showCompletion();try{window.close();}catch{}}
+function showCompletion(){app.innerHTML='<main class="completion" role="status"><span>已提交</span></main>';}
+let alreadyCompleted=false;try{const c=JSON.parse(sessionStorage.getItem('loop.completed.v1')||'null');alreadyCompleted=!!c && c.reviewId===(incomingReview||state.review?.reviewId||null);}catch{}
+if(alreadyCompleted)showCompletion();else{draw();drawAgents();save();showDrafts();void loadIncomingReview();}

@@ -1,0 +1,21 @@
+{
+  "canonicalText": "Loop · 方案评审\n我们先做一个轻量版本，再逐步扩展。\n同一句话，出现两次。\n同一句话，出现两次。\n技术方案\n\n使用 POST /webhook 提交反馈。\n保留中文、emoji 🧭 与换行定位。\n加粗内容也可以与相邻文字一起选择。\n\n\n\n\n阶段\n交付\n\n\n\n第一阶段\n本地批注\n\n\n第二阶段\nAgent 接收反馈\n\n\n\n这里是引用：先验证，再扩展。\n\nconst message = \"你好，Loop\";\n\n总体目标：每条意见都能回到对应原文。\n",
+  "payload": {
+    "protocolVersion": 1,
+    "submissionId": "00000000-0000-4000-8000-000000000002",
+    "agentName": "本地测试",
+    "document": "# Loop · 方案评审\n\n我们先做一个**轻量版本**，再逐步扩展。\n\n同一句话，出现两次。\n\n同一句话，出现两次。\n\n## 技术方案\n\n- 使用 `POST /webhook` 提交反馈。\n- 保留中文、emoji 🧭 与换行定位。\n- **加粗内容**也可以与相邻文字一起选择。\n\n| 阶段 | 交付 |\n| --- | --- |\n| 第一阶段 | 本地批注 |\n| 第二阶段 | Agent 接收反馈 |\n\n> 这里是引用：先验证，再扩展。\n\n```typescript\nconst message = \"你好，Loop\";\n```\n\n总体目标：每条意见都能回到对应原文。\n",
+    "annotations": [
+      {
+        "id": "fixture-second-quote",
+        "quote": "同一句话，出现两次。",
+        "comment": "请只修改第二处。",
+        "start": 41,
+        "end": 51
+      }
+    ],
+    "generalFeedback": "保持简洁。",
+    "submittedAt": "2026-10-18T00:00:00Z",
+    "summary": "以下是我对你方案的逐条反馈，请据此修改出下一版：\n\n1. 原文：\n> 同一句话，出现两次。\n意见：请只修改第二处。\n\n总体意见：保持简洁。"
+  }
+}

@@ -1,0 +1,4 @@
+.DS_Store
+# Local feedback inboxes from examples/receiver.mjs hold full plan text
+LoopInbox/
+inbox/

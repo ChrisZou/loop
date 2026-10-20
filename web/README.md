@@ -1,59 +1,94 @@
-# Loop
+# Loop Web
 
-人在回路 · 方案批注。将 AI 生成的 Markdown 方案粘贴进来，选择原文并逐条批注，再复制为一条结构化反馈，交给 AI 修改下一版。
+轻量中文 Markdown 审阅界面，Vite + TypeScript，无后端依赖、无 CDN、无遥测。字体使用系统字体。
 
-移动端优先的纯静态应用：Vite + vanilla TypeScript，使用 marked 渲染 Markdown、DOMPurify 清理 HTML。无需后端、账户或 API。
+来自 Codex 做的 Loop（`cf66c1f`），2026-10-20 合并进本仓库，替换了原先「粘贴方案 + 复制反馈」的版本。反馈通过 Webhook 提交，提交格式见 [protocol/](../protocol/README.md)。
 
-## 开发与构建
+## 运行
 
-需要 Node.js 22.18+（或支持 TypeScript 类型擦除的较新版本）及 npm。
+需要 Node.js 22.12+。
 
 ```sh
-npm install
-npm run dev
-npm run test
+npm ci
+npm run dev            # http://127.0.0.1:5173
+npm test               # vitest + jsdom
 npm run build
+npm run test:e2e       # Playwright，用本机安装的 Google Chrome
 ```
 
-`npm run build` 先执行 TypeScript 检查，再输出 `dist/`。Vite 使用 `base: './'`，可将 `dist/` 部署到任意静态服务器的根目录或子路径。生产环境建议 HTTPS，以使用 Clipboard API；直接通过 `file://` 打开不属于支持的部署方式。
-
-可用 `npm run preview` 预览构建产物，完成后按 Ctrl+C 停止服务。
+生产文件在 `dist/`，可用任意静态 HTTP 服务部署。不要直接用 `file://` 打开。生产建议 HTTPS；UUID 与 Clipboard 等浏览器能力依赖安全上下文，localhost 可用于开发。
 
 ## 使用
 
-1. 粘贴方案，或点击“载入示例”，然后“开始批注”。
-2. 选中文字后点击“批注”。手机上使用系统长按选择，批注按钮位于底部列表入口上方。
-3. 输入意见并保存；Ctrl/Cmd+Enter 也可保存。取消不会改变批注。
-4. 点击批注引文或正文定位原文；点击高亮查看对应批注。手机底部“批注 (N)”可点击或上下滑动展开、收起。
-5. 可填写“总体意见”，点击右上角“导出反馈”。提示中的数量只计批注，填写了总体意见时另标注“（含总体意见）”；两者都为空时提示“还没有批注”，不改动剪贴板。眼睛图标始终提供预览入口。
+1. Markdown 标签页粘贴原文，应用修改。
+2. 在审阅页选中文字，点击浮动「批注」或 Alt+Enter。保存后显示黄色高亮及编号。
+3. 悬停编号或点击高亮/编号打开编辑卡；Tab 可聚焦编号，Enter 打开。移动端使用系统文字选择，再点浮动按钮。Esc 关闭卡片。
+4. 可填写底部总体意见。在设置中添加一个或多个 Agent，填写其 Webhook。可选密钥以 Authorization: Bearer 发送。
+5. 顶部选择目标，点击提交。已打开的未保存批注、未应用的 Markdown 修改必须先处理。
 
-右上角铅笔图标为“编辑原文”，加号为“新建”。删除批注需要确认；新建时如有批注或总体意见也需要确认。
+不预设任何 Agent 的回调地址。普通 AI 对话链接不是 Webhook。
 
-原文、未提交的原文编辑、已保存批注、总体意见和当前步骤自动保存在当前浏览器的 localStorage。评论编辑器内尚未保存的输入不持久化。保存失败会给出提示。
+本地联调可以用仓库根目录的示例收件器：`node examples/receiver.mjs`，在设置里把 Webhook 填成 `http://127.0.0.1:8787/webhook`。加 `--inbox-dir <目录>` 会把每次提交存成 JSON 文件，`examples/watch-inbox.mjs` 可以读取。收件器只接受 5173/4173 端口的本机网页。
 
-## 文件
+## 数据和安全
 
-- `src/main.ts`：交互、选区捕获、响应式批注面板、编辑器、复制回退与恢复。
-- `src/markdown.ts`：Markdown 渲染、HTML 清理及中文示例。
-- `src/anchor.ts`：TreeWalker 字符偏移、选区转换、跨节点与重叠高亮、重新定位。
-- `src/export.ts`：无 DOM 依赖的排序与反馈格式化。
-- `src/store.ts`：会话类型、持久化及读取校验。
-- `src/style.css`：移动端与桌面布局、深色模式、安全区、键盘可见视口处理。
-- `tests/`：Node 内置测试；覆盖导出精确格式、多行缩进、顺序、未定位反馈及引文重定位。
+- 原文、批注、总体意见、Agent 名称和地址、上次选择保存在 localStorage（同源/当前浏览器）。不提供云同步或加密。
+- 密钥只在当前页内存中保留；刷新/关闭即清除。不要在 Webhook URL 中放入密钥。存储不可用会在状态中显示。
+- 输入中的 Markdown 和批注草稿另存于 localStorage；刷新后显示「继续编辑」提示。切回审阅或关闭批注卡不会丢弃草稿。只有「放弃修改」「放弃草稿」、新建、应用或保存对应内容会清理相关草稿。草稿不改变已应用原文及其锚点。
+- 原文改动时需明确确认清空已有原文批注；总体意见保留。新建需确认，保留 Agent 设置。
+- 标注不允许重叠，相邻选择允许。修改已有标注或删除再重新选择。
+- Markdown 原始 HTML 显示为文字；DOMPurify 净化输出。外部图片不加载，显示替代说明；避免打开原文就向远程发请求。链接只有用户点击才打开。
+- 地址允许 HTTPS 及 localhost/127.0.0.1/[::1] HTTP。拒绝 URL 用户名、密码和片段。HTTP 只建议本地调试。
+- 提交时做不可变快照；不清空原文/批注。15 秒超时，网络/CORS/HTTP 错误保留所有反馈。HTTP 2xx 仅说明接口接受，不证明 Agent 已生成回复。跳转被拒绝，避免密钥转发到其他地址。
+- 超时或连接中断可能已被服务器接收，请先核对接收端再重试。每次明确点击提交生成新 submissionId，服务端应以 ID 去重。
 
-## 设计与限制
+## 集成协议
 
-- 锚点以渲染后 article 的完整 `textContent` 为基准，使用 UTF-16 字符偏移。高亮只包装文本节点，不改变原文内容；重叠批注会叠加颜色。
-- 保存的引文会将连续空白规范为一个空格。导出函数也支持带换行的引文与意见，并按约定缩进。
-- 编辑原文后先校验原偏移，再寻找匹配引文。重复引文且原偏移已失效时使用第一次匹配，可能需要人工核对。找不到的批注显示“未定位”，保留在列表和导出末尾。
-- localStorage 仅属于当前浏览器和站点地址，没有同步、多人协作或历史版本。隐私模式、清理网站数据、容量限制都可能影响恢复；重要反馈请及时导出。
-- Clipboard API 失败后尝试 `execCommand('copy')`；仍失败则显示已选中的只读文本及“请长按全选后复制”。浏览器可能限制自动复制与选择，需要手动操作。
-- 系统选择菜单和软键盘行为依赖浏览器。已针对移动端设置底部批注入口、16px 输入字号、安全区和 VisualViewport；仍应在真实 iPhone Safari / Android 上验收长按选择、跨段落拖动、键盘与复制。
-- Markdown 不包含语法着色、数学公式或复杂图表。外链图片仍需联网；没有离线 Service Worker。源 HTML 中的表单、样式等交互内容会被移除。
-- 大文档及大量重叠批注会增加重新渲染的成本；v1 面向日常方案审阅。
+详见 [protocol/README.md](../protocol/README.md) 和 JSON Schema。POST application/json:
 
-## 本次验证
+```json
+{
+  "protocolVersion": 1,
+  "submissionId": "UUID",
+  "agentName": "方案助手",
+  "document": "原始 Markdown",
+  "annotations": [{"id":"UUID","quote":"所选原文","comment":"意见","start":0,"end":4}],
+  "generalFeedback": "总体意见",
+  "submittedAt": "ISO 8601 UTC",
+  "summary": "以下是我对你方案的逐条反馈，请据此修改出下一版：\n\n1. 原文：\n> 所选原文\n意见：意见\n\n总体意见：总体意见"
+}
+```
 
-- `npm run build`、`npm run test`（10 项）通过。
-- 用 Playwright + 本机 Chrome（headless）在 1280px 桌面和 390px iPhone 13 模拟（触摸）视口下，对 dev server 和 `vite preview` 构建产物分别跑通：载入示例 → 选区出现“批注”按钮 → 添加 3 条批注（含跨列表项/标题/段落的选区）→ 高亮与列表 → 点击列表跳转 → 总体意见 → 导出复制（剪贴板内容与约定格式一致）→ 预览 → 刷新恢复 → 删除；并模拟 Clipboard API 与 execCommand 都失败时，弹出已全选的文本框。无页面错误。
-- 选区是用脚本设置 DOM Selection 模拟的；真实 iPhone Safari 的长按选择、拖动手柄、系统菜单与软键盘仍需真机验收。
+start/end 是净化后的 Markdown DOM 中所有文字节点拼接后的 UTF-16 code unit 偏移，左闭右开。不增加块分隔符；保留渲染器生成的真实空白。排除批注编号节点，原始 Markdown 的字符偏移不可与此混用。annotations 按 start 排序；quote 用于二次校验。
+
+接收端需要处理 OPTIONS，允许网页来源、POST、Content-Type 和可选 Authorization。跨域只在服务端能正确解决，前端不能绕过 CORS。HTTPS 页面调用 HTTP localhost 还可能受混合内容/本地网络访问策略限制，优先同源代理或可信 HTTPS。
+
+## 验证情况
+
+- `npm run build`：通过。
+- `npm test`：31 项通过，覆盖重复引用、嵌套粗体/列表、多节点标注、代码/表格、UTF-16、编号排除、重叠、HTML/脚本/图片安全、URL、排序/快照，以及 UI 增删改、快捷键、草稿恢复、会话密钥、HTTP 错误/成功、改文与新建确认。Node 25+ 自带的 localStorage 会盖掉 jsdom 的，`vitest.config.ts` 里已用 `--no-experimental-webstorage` 关掉。
+- `npm run test:e2e`：3 个桌面/390px 手机视口流程在本机 Chrome 中通过。
+- 用示例收件器实际提交过一次：2 条批注加总体意见，收件器收到的 summary 与 Mac 版回传格式一致。
+- 未在 iPhone Safari 真机上验证长按选字、系统键盘和提交后自动关闭页面。
+
+## 托管模式
+
+下面三种模式需要同源服务提供 `/api/session`、`/api/feedback`、`/api/reviews`。Codex 版里的 `hosted/` 是一个临时公开演示（2026-10-20 已停止写入），没有合并进来；独立静态部署不会请求这些接口。
+
+### 可选托管演示模式
+
+仅当宿主页在 bundle 前明确注入 `window.LOOP_DEMO=true` 时，启用同源演示收件箱预设。提交先 POST `/api/session` 取得一次页面内存中使用的短期能力，再用 `X-Loop-Session` POST `/api/feedback`。不会把能力写入存储；仅校验 accepted 且 submissionId 与本次匹配才报告入箱。显示公开演示/虚构内容/云端提交警告，不声称已启动 Agent。独立版无此标志时保持通用 Webhook 行为。
+
+### Agent 主动发送方案
+
+收到 `?review=<UUID>` 链接时，同源 GET `/api/reviews/<UUID>` 获取不可变方案与标题、Agent、revision 元数据。空白/初始演示页面自动打开；已有原文、批注、总体意见或草稿时必须确认切换。取消或加载失败保持当前内容，并允许重新打开。同一 reviewId 刷新只恢复本地状态，不覆盖修改。反馈关联顶层 `reviewId` 和 `revision`。点新建或应用实际改变的 Markdown 会清除该关联和地址栏 review 参数，转为手动文档；未改变原文的应用操作保留关联。独立静态模式不请求此 API。
+
+方案链接可由任意持有链接的人读取，仅用于虚构测试；反馈没有公开读取接口。本入口不表示已自动唤醒 Agent。
+
+## 极简审阅与提交完成
+
+审阅页只显示必要操作、原文、行内批注与总体意见；说明位于设置。确认成功响应后调用 `window.close()`。浏览器不允许关闭时显示空白的「已提交」完成页，不再显示编辑器。同一会话刷新相同方案仍为完成页；打开新的 review 链接可继续审阅。网络错误、超时或无效回执不会关闭编辑器。完成态是 sessionStorage 标记；用户资料与草稿仍在本地保留。浏览器/iPhone Safari 是否允许真实关闭仍需实机验证。
+
+### 当前会话专属审阅模式
+
+托管演示中的 Agent 方案链接只显示提交操作、原文、行内批注和总体意见。新建、设置、目标选择和 Markdown 编辑入口隐藏且禁用；提交强制使用当前会话同源接收端，不受旧浏览器外部 Agent 选择影响。独立通用工具仍保留多 Agent 设置和手动 Markdown 模式。既有未保存草稿的恢复/放弃入口保留，避免丢失内容。

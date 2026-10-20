@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:loop:submission:v1",
+  "title": "Loop feedback submission v1",
+  "type": "object",
+  "required": [
+    "protocolVersion",
+    "submissionId",
+    "agentName",
+    "document",
+    "annotations",
+    "generalFeedback",
+    "submittedAt",
+    "summary"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "protocolVersion": {
+      "const": 1
+    },
+    "submissionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "agentName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "document": {
+      "type": "string"
+    },
+    "generalFeedback": {
+      "type": "string"
+    },
+    "submittedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "annotations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "quote",
+          "comment",
+          "start",
+          "end"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "quote": {
+            "type": "string",
+            "minLength": 1
+          },
+          "comment": {
+            "type": "string",
+            "minLength": 1
+          },
+          "start": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "end": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    "reviewId": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$",
+      "description": "Immutable originating review ID; must be supplied together with revision."
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000
+    }
+  },
+  "dependentRequired": {
+    "reviewId": [
+      "revision"
+    ],
+    "revision": [
+      "reviewId"
+    ]
+  }
+}

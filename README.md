@@ -1,11 +1,13 @@
 # Loop
 
-人在回路 · 方案批注。像 Google Docs 评论一样在 AI 生成的方案上选中原文逐条批注，整理成一条结构化反馈交回给 AI，让它修改下一版。Mac 版由 AI 发起审阅、提交即回传；Web 版粘贴方案、一键复制反馈。
+人在回路 · 方案批注。像 Google Docs 评论一样在 AI 生成的方案上选中原文逐条批注，整理成一条结构化反馈交回给 AI，让它修改下一版。Mac 版由 AI 发起审阅、提交即回传；Web 版粘贴方案批注，提交到 Agent 的 Webhook。
 
 | 目录 | 形态 | 说明 |
 | --- | --- | --- |
-| [`web/`](web/README.md) | 纯静态网页（Vite + TypeScript） | 移动端优先，主要在 iPhone Safari 上使用，桌面浏览器同样可用；会话存在 localStorage |
+| [`web/`](web/README.md) | 纯静态网页（Vite + TypeScript） | 桌面和手机都能用；批注后通过 Webhook 提交给 Agent，可配置多个 Agent；原文、批注和草稿存在 localStorage。来自 Codex 版 Loop，2026-10-20 合并进来 |
 | [`mac/`](mac/README.md) | 原生 SwiftUI macOS App | 只做审阅：AI 用 `loop review` 发起，提交后反馈自动回传；「红笔批改」风格（白纸、衬线标题、隐藏 Markdown 符号）；行内批注（朱红下划线 + 末尾圈码，悬停看、点击改） |
+| [`protocol/`](protocol/README.md) | 文档 + JSON Schema | Web 版提交反馈的格式（Webhook v1） |
+| [`examples/`](examples/) | Node 脚本 | 本地示例收件器 `receiver.mjs` 和收件箱读取器 `watch-inbox.mjs`，用来本机联调 Web 版提交；测试在 `tests/` |
 
 两端互相独立，不共享数据。构建、运行和限制见各自的 README。
 
@@ -19,7 +21,12 @@ AI 代理在后台运行这条命令，命令一结束就读输出拿到反馈�
 
 ```sh
 # web
-cd web && npm install && npm run test && npm run build   # 产物在 web/dist/
+cd web && npm ci && npm test && npm run build   # 产物在 web/dist/
+npm run test:e2e                                 # Playwright，用本机 Chrome
+
+# 示例收件器（在仓库根目录）
+node --test tests/*.test.mjs
+node examples/receiver.mjs                       # http://127.0.0.1:8787/webhook
 
 # mac
 cd mac && swift build -c release && .build/release/Loop --selftest
