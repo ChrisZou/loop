@@ -13,6 +13,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        // A 总评 still being written is kept, like a comment card left open.
+        store?.saveGeneral()
         store?.saveNow()
         // Closing a review without submitting must not look like an approval to the waiting agent.
         if let store, !store.submitted {
@@ -41,11 +43,9 @@ struct LoopApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandMenu("批注") {
-                Button("添加批注") {
-                    if store.draft != nil { store.saveDraft() } else { store.addComment() }
-                }
-                .keyboardShortcut(.return, modifiers: .command)
-                .disabled(store.draft == nil ? !store.canAdd : store.draftBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button(store.draft != nil ? "保存批注" : store.editingGeneral ? "保存总评" : "添加批注", action: store.commitShortcut)
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .disabled(!store.canCommitShortcut)
                 Divider()
                 Button("预览提交内容") { store.preview = true }
                 Button("提交", action: store.requestSubmit)

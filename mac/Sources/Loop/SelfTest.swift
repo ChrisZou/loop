@@ -138,7 +138,15 @@ enum SelfTest {
         // Review mode: the agent gets the export, or an explicit approval when there is nothing to say.
         let reviewStore = reviewing(Session(text: text))
         check(!reviewStore.hasFeedback && reviewStore.submission == ReviewRequest.approval, "empty review submits approval")
-        reviewStore.general = "范围再收一收"
+        reviewStore.beginGeneral()
+        reviewStore.generalDraft = "  范围再收一收 \n"
+        check(!reviewStore.hasFeedback, "a 总评 still being written is not feedback until saved")
+        reviewStore.commitShortcut()
+        check(reviewStore.general == "范围再收一收" && !reviewStore.editingGeneral, "⌘↩ saves the 总评, trimmed")
+        reviewStore.beginGeneral()
+        reviewStore.generalDraft = "改了又不要"
+        reviewStore.cancelGeneral()
+        check(reviewStore.general == "范围再收一收", "Esc keeps the saved 总评")
         check(reviewStore.submission == reviewStore.exported, "general-only review submits the export")
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("loop-selftest-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }

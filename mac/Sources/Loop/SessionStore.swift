@@ -3,7 +3,10 @@ import Combine
 
 final class SessionStore: ObservableObject {
     @Published var comments: [Comment] { didSet { scheduleSave() } }
+    /// The saved 总评; `generalDraft` holds it while it is being edited.
     @Published var general: String { didSet { scheduleSave() } }
+    @Published var generalDraft = ""
+    @Published var editingGeneral = false
     @Published var selection = NSRange(location: 0, length: 0)
     @Published var activeID: UUID?
     @Published var draft: Comment?
@@ -12,6 +15,8 @@ final class SessionStore: ObservableObject {
     @Published var preview = false
     @Published var confirmSubmit = false
     @Published var persistenceError: String?
+    /// Where the editor drew the sheet, so the 总评 bar can match its width and center.
+    @Published var sheet = SheetLayout(width: Theme.sheetWidth, offset: 0)
     let review: ReviewRequest
     var text: String { review.text }
     /// Markdown syntax the editor hides; selections never start or end on it and quotes leave it out.
@@ -103,8 +108,36 @@ final class SessionStore: ObservableObject {
         if activeID == id { activeID = nil }
     }
 
-    /// Keeps a comment that is still being typed, then asks before approving a plan without feedback.
+    func beginGeneral() {
+        guard !editingGeneral else { return }
+        generalDraft = general
+        editingGeneral = true
+    }
+
+    func saveGeneral() {
+        guard editingGeneral else { return }
+        general = generalDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        editingGeneral = false
+    }
+
+    func cancelGeneral() {
+        generalDraft = general
+        editingGeneral = false
+    }
+
+    /// ⌘↩ saves whatever is being written — a comment, or the 总评 — and otherwise starts a comment.
+    func commitShortcut() {
+        if draft != nil { saveDraft() } else if editingGeneral { saveGeneral() } else { addComment() }
+    }
+
+    var canCommitShortcut: Bool {
+        if draft != nil { return !draftBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        return editingGeneral || canAdd
+    }
+
+    /// Keeps a comment or 总评 that is still being typed, then asks before approving a plan without feedback.
     func requestSubmit() {
+        saveGeneral()
         if draft != nil {
             if draftBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { cancelDraft() } else { saveDraft() }
         }
@@ -146,4 +179,10 @@ final class SessionStore: ObservableObject {
             persistenceError = nil
         } catch { persistenceError = "保存失败：\(error.localizedDescription)" }
     }
+}
+
+struct SheetLayout: Equatable {
+    var width: CGFloat
+    /// The sheet's center relative to the window's center.
+    var offset: CGFloat
 }

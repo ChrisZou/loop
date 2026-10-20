@@ -72,9 +72,15 @@ final class PlanTextView: NSTextView {
         drawHighlights(in: rect, storage: storage, manager: manager, container: container, origin: origin)
     }
 
+    /// The white sheet behind the text column.
+    var sheetRect: NSRect {
+        let width = textContainer?.size.width ?? 0
+        return NSRect(x: textContainerOrigin.x - sheetPadding, y: Theme.sheetTop, width: width + sheetPadding * 2,
+                      height: bounds.height - Theme.sheetTop - Theme.sheetBottom)
+    }
+
     private func drawSheet(in rect: NSRect, origin: NSPoint, width: CGFloat) {
-        let sheet = NSRect(x: origin.x - sheetPadding, y: Theme.sheetTop, width: width + sheetPadding * 2,
-                           height: bounds.height - Theme.sheetTop - Theme.sheetBottom)
+        let sheet = sheetRect
         guard sheet.insetBy(dx: -40, dy: -40).intersects(rect) else { return }
         let path = NSBezierPath(roundedRect: sheet, xRadius: 6, yRadius: 6)
         NSGraphicsContext.saveGraphicsState()
@@ -214,6 +220,7 @@ final class EditorContainer: NSView {
     var onAdd: (() -> Void)?
     var onLayout: (() -> Void)?
     var onScroll: (() -> Void)?
+    var onSheetLayout: ((SheetLayout) -> Void)?
     var canAdd = false
     private var scrollOrigin = NSPoint.zero
     private var scrollObserver: NSObjectProtocol?
@@ -280,7 +287,10 @@ final class EditorContainer: NSView {
         textView.postsFrameChangedNotifications = true
         frameObserver = NotificationCenter.default.addObserver(
             forName: NSView.frameDidChangeNotification, object: textView, queue: .main
-        ) { [weak self] _ in self?.onLayout?() }
+        ) { [weak self] _ in
+            self?.onLayout?()
+            self?.reportSheet()
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -318,6 +328,13 @@ final class EditorContainer: NSView {
         textView.needsDisplay = true
         positionButton()
         onLayout?()
+        reportSheet()
+    }
+
+    /// Measured from what the text view draws, which a legacy scroller can make narrower than planned.
+    private func reportSheet() {
+        let sheet = convert(textView.sheetRect, from: textView)
+        onSheetLayout?(SheetLayout(width: sheet.width, offset: sheet.midX - bounds.midX))
     }
 
     /// The last visible character of a range and its baseline, in text view coordinates.
@@ -388,6 +405,10 @@ struct DocumentEditor: NSViewRepresentable {
         view.onAdd = { [weak store] in store?.addComment() }
         view.onLayout = { [weak coordinator = context.coordinator] in coordinator?.layoutMarkers() }
         view.onScroll = { [weak coordinator = context.coordinator] in coordinator?.scrolled() }
+        view.onSheetLayout = { [weak store] layout in
+            // Published after the layout pass, never during a SwiftUI update.
+            DispatchQueue.main.async { if store?.sheet != layout { store?.sheet = layout } }
+        }
         view.textView.onHover = { [weak coordinator = context.coordinator] point in coordinator?.hoverText(at: point) }
         context.coordinator.container = view
         return view
