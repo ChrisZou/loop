@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 enum SelfTest {
     static func run() {
@@ -262,6 +263,62 @@ enum SelfTest {
             check(todoEditor.textView.taskBox(at: NSPoint(x: frame.maxX + 40, y: frame.midY)) == nil, "the item's text is not the box")
         } else {
             check(false, "checkbox is laid out where it can be clicked")
+        }
+
+        // Placeholders give way to pinyin still being composed, which SwiftUI keeps out of the binding until a
+        // candidate is picked. Rendered offscreen and read back: the placeholder's run must be blank while composing.
+        func composing<Content: View>(_ content: Content, size: NSSize, label: String, draft: () -> String) {
+            let host = NSHostingView(rootView: content)
+            host.frame = NSRect(origin: .zero, size: size)
+            let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+            window.contentView = host
+            func settle() { RunLoop.current.run(until: Date().addingTimeInterval(0.15)) }
+            func editor(in view: NSView) -> NSTextView? {
+                if let text = view as? NSTextView, text.isEditable { return text }
+                return view.subviews.lazy.compactMap(editor).first
+            }
+            settle()
+            guard let field = editor(in: host) else { return check(false, "\(label): editor is hosted") }
+            window.makeFirstResponder(field)
+            settle()
+            // Past where three letters of pinyin end, on the first line: where the placeholder runs on.
+            let line = host.convert(field.bounds, from: field)
+            let run = NSRect(x: line.minX + 50, y: line.minY + 2, width: 60, height: 16)
+            func placeholderShows() -> Bool {
+                guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return false }
+                host.cacheDisplay(in: host.bounds, to: rep)
+                let scale = CGFloat(rep.pixelsWide) / host.bounds.width
+                for y in stride(from: run.minY, to: run.maxY, by: 0.5) {
+                    for x in stride(from: run.minX, to: run.maxX, by: 0.5) {
+                        let row = host.isFlipped ? y : host.bounds.height - y
+                        if let color = rep.colorAt(x: Int(x * scale), y: Int(row * scale))?.usingColorSpace(.sRGB),
+                           color.brightnessComponent < 0.8 { return true }
+                    }
+                }
+                return false
+            }
+            check(placeholderShows(), "\(label): placeholder shows while empty")
+            field.setMarkedText("xin", selectedRange: NSRange(location: 3, length: 0),
+                                replacementRange: NSRange(location: NSNotFound, length: 0))
+            settle()
+            check(draft().isEmpty && !placeholderShows(), "\(label): composing pinyin hides the placeholder")
+            field.setMarkedText("", selectedRange: NSRange(location: 0, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+            field.unmarkText()
+            settle()
+            check(placeholderShows(), "\(label): dropping the composition brings the placeholder back")
+            field.setMarkedText("xin", selectedRange: NSRange(location: 3, length: 0),
+                                replacementRange: NSRange(location: NSNotFound, length: 0))
+            field.insertText("新", replacementRange: field.markedRange())
+            settle()
+            check(draft() == "新" && !placeholderShows(), "\(label): picking a candidate keeps it hidden")
+        }
+        let barStore = reviewing(Session(text: text))
+        composing(FeedbackBar(store: barStore), size: NSSize(width: 700, height: 120), label: "总评") { barStore.generalDraft }
+        let cardStore = reviewing(Session(text: text))
+        cardStore.selection = NSRange(location: 0, length: 3)
+        cardStore.addComment()
+        composing(CommentEditorCard(store: cardStore, number: 1), size: NSSize(width: 340, height: 220), label: "批注") {
+            cardStore.draftBody
         }
 
         // Review mode: the agent gets the export, or an explicit approval when there is nothing to say.

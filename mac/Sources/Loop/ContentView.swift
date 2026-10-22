@@ -87,9 +87,13 @@ struct ContentView: View {
 
 /// 总评, written once the whole plan has been read. The composer files each note into the list above it
 /// with ⌘↩ and empties itself for the next one; Return starts a new line. Both are as wide as the sheet.
-private struct FeedbackBar: View {
+struct FeedbackBar: View {
     @ObservedObject var store: SessionStore
     @FocusState private var focused: Bool
+    @State private var composing: String?
+
+    /// What the composer shows, including pinyin an input method is still composing.
+    private var shown: String { composing ?? store.generalDraft }
 
     var body: some View {
         VStack(spacing: 8) {
@@ -144,7 +148,7 @@ private struct FeedbackBar: View {
                 .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 2 }
             // A hidden copy of the text sets the height (up to six lines) and the baseline the labels align to;
             // the editor laid over it scrolls past six lines.
-            Text(store.generalDraft.isEmpty || store.generalDraft.hasSuffix("\n") ? store.generalDraft + " " : store.generalDraft)
+            Text(shown.isEmpty || shown.hasSuffix("\n") ? shown + " " : shown)
                 .font(.system(size: 14)).lineSpacing(3)
                 .lineLimit(6)
                 .padding(.horizontal, 5)
@@ -152,7 +156,7 @@ private struct FeedbackBar: View {
                 .hidden()
                 .accessibilityHidden(true)
                 .overlay(alignment: .topLeading) {
-                    if store.generalDraft.isEmpty {
+                    if shown.isEmpty {
                         Text(store.generals.isEmpty ? "读完整份方案后的总体意见（可选）" : "再写一条总评…")
                             .font(.system(size: 14))
                             .foregroundStyle(Color(Theme.secondary))
@@ -167,6 +171,7 @@ private struct FeedbackBar: View {
                         .scrollContentBackground(.hidden)
                         .scrollIndicators(.never)
                         .focused($focused)
+                        .composition($composing, focused: focused)
                         .accessibilityLabel("总评")
                         .onExitCommand {
                             // Esc drops a change to a saved note; a new note keeps its text and just steps away.

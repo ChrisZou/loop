@@ -127,6 +127,7 @@ struct CommentEditorCard: View {
     @ObservedObject var store: SessionStore
     let number: Int
     @FocusState private var focused: Bool
+    @State private var composing: String?
 
     private var existing: Bool { store.comments.contains { $0.id == store.draft?.id } }
     private var empty: Bool { store.draftBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -154,7 +155,7 @@ struct CommentEditorCard: View {
                 .padding(.horizontal, 6).padding(.vertical, 8)
                 .frame(height: 96)
                 .overlay(alignment: .topLeading) {
-                    if store.draftBody.isEmpty {
+                    if (composing ?? store.draftBody).isEmpty {
                         Text("写下你的意见…").font(.system(size: 14)).foregroundStyle(Color(Theme.secondary))
                             .padding(.leading, 11).padding(.top, 8).allowsHitTesting(false)
                     }
@@ -163,6 +164,7 @@ struct CommentEditorCard: View {
                 .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .strokeBorder(Color(Theme.vermilion).opacity(focused ? 0.45 : 0.15)))
                 .focused($focused)
+                .composition($composing, focused: focused)
                 .accessibilityLabel("批注意见")
                 .onExitCommand(perform: store.cancelDraft)
             HStack(spacing: 6) {

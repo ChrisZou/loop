@@ -101,3 +101,21 @@ struct PlainToolButtonStyle: ButtonStyle {
         }
     }
 }
+
+extension View {
+    /// SwiftUI's TextEditor holds its binding back while an input method is composing (pinyin before a candidate is
+    /// picked), so a placeholder keyed on the binding shows through the composition. This hands `text` the editor's
+    /// own text, composing part included, while something is being composed, and nil otherwise. Only the focused
+    /// editor's typing counts.
+    func composition(_ text: Binding<String?>, focused: Bool) -> some View {
+        // Composing posts no text-change notification, but every keystroke of it moves the selection.
+        let center = NotificationCenter.default
+        let edits = center.publisher(for: NSTextView.didChangeSelectionNotification)
+            .merge(with: center.publisher(for: NSText.didChangeNotification))
+        return onReceive(edits) { note in
+            guard focused, let view = note.object as? NSTextView, view.window?.firstResponder === view else { return }
+            text.wrappedValue = view.hasMarkedText() ? view.string : nil
+        }
+        .onChange(of: focused) { _, isFocused in if !isFocused { text.wrappedValue = nil } }
+    }
+}
