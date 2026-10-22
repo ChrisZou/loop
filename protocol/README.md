@@ -34,10 +34,10 @@ Web 版提交反馈用的协议。
 - 未关联入口方案的旧版手工审阅可省略二者。summary 的内容和格式不因关联信息改变。
 - 有方案数据库的接收端还必须验证 ID 确实存在、revision 一致，并核对原文是否匹配。通用本地 receiver 只做结构与成对校验，没有方案数据库，不能证明关联真实存在。
 
-临时托管实现的写入接口为 POST /api/reviews，请求 {title, agentName, document, parentReviewId?}。限制分别为 title 120 字符、agentName 100 字符、document 30000 字符；parentReviewId 如提供应是已有方案的小写 UUID。服务生成新的 reviewId、createdAt；没有父方案时 revision=1，有父方案时为父版+1，最多1000。响应包含 reviewUrl。不能修改或覆盖既有版本，也没有公开列表接口。
+生产托管实现的写入接口为 POST /api/reviews，请求 {title, agentName, document, parentReviewId?}。限制分别为 title 120 字符、agentName 100 字符、document 30000 字符；parentReviewId 如提供应是已有方案的小写 UUID。服务生成新的 reviewId、createdAt；没有父方案时 revision=1，有父方案时为父版+1，最多1000。响应包含 reviewUrl。不能修改或覆盖既有版本，也没有公开列表接口。
 
 客户端通过 GET /api/reviews/<reviewId> 取得 {reviewId,title,agentName,document,createdAt,parentReviewId:null|UUID,revision}。浏览器深链为 /?review=<reviewId>。本仓库的 Mac 版不走这套接口，它由 `loop review` 在本机发起，提交后反馈直接打印到标准输出。URL 中不得嵌入长期密钥。切换到不同方案前需保护本地未提交批注和草稿；同一不可变方案重载应保留本地审阅。
 
-临时托管写入使用 POST /api/session 取得短期会话，再以 X-Loop-Session 提交；这只是演示写入控制，不证明某个真实 Agent 身份。不能把它当作通用生产鉴权协议。路由是相对接口契约；本仓库没有包含托管服务端实现。
+生产服务端位于 [server/](../server/README.md)。POST /api/reviews 和 GET /api/reviews/<id>/feedback 必须使用 Authorization: Bearer LOOP_AGENT_TOKEN；会话令牌不能创建方案或读取反馈。浏览器 POST /api/session 取得 {session,expiresIn:1800}，再以 X-Loop-Session POST /api/feedback。反馈必须携带 reviewId/revision，agentName/document 与原方案一致。接收后返回202 {accepted:true,submissionId,duplicate,persisted:true}；鉴权轮询返回 {reviewId,feedback:[{payload,receivedAt,delivery}]}。该短期能力不认证审阅人身份。公开方案无列表接口，持链接者可读。旧临时 demo 使用会话创建方案的方式不适用于生产服务。
 
 下一版须建立新记录和新链接；收到反馈后把对应原始 reviewId/revision 与下一版 parentReviewId 关联。提交回执与 Agent 读取、处理、产出下一版是不同事件。用户提交成功后关闭审阅界面，不代表后续 Agent 工作已完成。

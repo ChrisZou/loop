@@ -1,0 +1,13 @@
+{
+  "name": "loop",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=22"},
+  "scripts": {
+    "start": "npm start --prefix server",
+    "build": "npm run build --prefix web",
+    "test": "node --test tests/*.test.mjs && npm test --prefix web",
+    "test:server": "node --test tests/server.test.mjs",
+    "test:e2e": "npm run test:e2e --prefix web"
+  }
+}

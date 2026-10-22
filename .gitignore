@@ -2,3 +2,11 @@
 # Local feedback inboxes from examples/receiver.mjs hold full plan text
 LoopInbox/
 inbox/
+# Hosted documents, feedback, and deployment credentials
+/data/
+/server/data/
+/webhooks.json
+/server/webhooks.json
+.env
+.env.*
+!.env.example

@@ -8,3 +8,10 @@
 /* Minimal review surface: explanations are confined to settings and real errors. */
 .brand-note,.intro,footer,.reading-hint,.document-meta,.private-badge{display:none!important}
 header{height:64px;background:#fafaf7;padding:0 4%}.brand{font-size:21px;gap:7px}.logo{width:28px;height:28px;font-size:25px;border-radius:8px}main{padding-top:24px}.document-toolbar{justify-content:flex-end;padding:8px 16px}.tabs button{padding:4px 12px;font-size:11px}.review-context{background:transparent;border:0;padding:0 4px;margin:0 0 14px;font-size:12px;color:#7b8377;font-weight:400}.completion{min-height:90vh;display:grid;place-items:center;font-size:16px;color:#61745e}.demo-warning{background:transparent;border:0;padding:0;margin:12px 0;font-size:11px}.draft-notice>span{display:none}.general{padding-top:20px}.markdown{padding-top:32px}@media(max-width:650px){header{min-height:60px;height:auto;padding:12px 14px}main{padding-top:20px}.markdown{padding-top:24px}}
+/* Long plans stay within the page; wide code and tables scroll independently. */
+.markdown{min-width:0}.markdown table{display:block;max-width:100%;overflow-x:auto}.markdown pre{max-width:100%}.popover blockquote,#status{overflow-wrap:anywhere}
+@media(max-width:650px),(pointer:coarse){
+ button,select{min-height:44px;min-width:44px}.tabs button,.draft-notice button,.popover-top button{min-height:44px}
+ .annotation-pin{min-width:28px;min-height:28px;font-size:11px;vertical-align:baseline;top:0}
+ .markdown{font-size:15px}.header-actions{min-width:0}.general textarea{min-height:100px}
+}

@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | [`web/`](web/README.md) | 纯静态网页（Vite + TypeScript） | 桌面和手机都能用；批注后通过 Webhook 提交给 Agent，可配置多个 Agent；原文、批注和草稿存在 localStorage。来自 Codex 版 Loop，2026-10-20 合并进来 |
 | [`mac/`](mac/README.md) | 原生 SwiftUI macOS App | 只做审阅：AI 用 `loop review` 发起，提交后反馈自动回传；「红笔批改」风格（白纸、衬线标题、隐藏 Markdown 符号）；行内批注（朱红下划线 + 末尾圈码，悬停看、点击改） |
+| [`server/`](server/README.md) | Node.js 22+ 托管服务 | Agent 鉴权创建不可变方案，公开链接审阅，反馈落盘、Webhook 投递与鉴权轮询 |
 | [`protocol/`](protocol/README.md) | 文档 + JSON Schema | Web 版提交反馈的格式（Webhook v1） |
 | [`examples/`](examples/) | Node 脚本 | 本地示例收件器 `receiver.mjs` 和收件箱读取器 `watch-inbox.mjs`，用来本机联调 Web 版提交；测试在 `tests/` |
 
@@ -23,6 +24,10 @@ AI 代理在后台运行这条命令，命令一结束就读输出拿到反馈�
 # web
 cd web && npm ci && npm test && npm run build   # 产物在 web/dist/
 npm run test:e2e                                 # Playwright，用本机 Chrome
+
+# 托管服务（在仓库根目录，先设置 LOOP_AGENT_TOKEN）
+npm start                                      # http://127.0.0.1:3020
+npm test                                       # Node + Web 单测
 
 # 示例收件器（在仓库根目录）
 node --test tests/*.test.mjs

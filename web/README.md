@@ -40,7 +40,7 @@ npm run test:e2e       # Playwright，用本机安装的 Google Chrome
 - Markdown 原始 HTML 显示为文字；DOMPurify 净化输出。外部图片不加载，显示替代说明；避免打开原文就向远程发请求。链接只有用户点击才打开。
 - 地址允许 HTTPS 及 localhost/127.0.0.1/[::1] HTTP。拒绝 URL 用户名、密码和片段。HTTP 只建议本地调试。
 - 提交时做不可变快照；不清空原文/批注。15 秒超时，网络/CORS/HTTP 错误保留所有反馈。HTTP 2xx 仅说明接口接受，不证明 Agent 已生成回复。跳转被拒绝，避免密钥转发到其他地址。
-- 超时或连接中断可能已被服务器接收，请先核对接收端再重试。每次明确点击提交生成新 submissionId，服务端应以 ID 去重。
+- 超时或连接中断可能已被服务器接收，请先核对接收端再重试。内容和目标未变时重试复用原请求体、submissionId 和时间（刷新后也保留）；修改反馈后生成新 ID，服务端应以 ID 去重。
 
 ## 集成协议
 
@@ -73,7 +73,11 @@ start/end 是净化后的 Markdown DOM 中所有文字节点拼接后的 UTF-16 
 
 ## 托管模式
 
-下面三种模式需要同源服务提供 `/api/session`、`/api/feedback`、`/api/reviews`。Codex 版里的 `hosted/` 是一个临时公开演示（2026-10-20 已停止写入），没有合并进来；独立静态部署不会请求这些接口。
+仓库的 [server/](../server/README.md) 提供 `/api/session`、`/api/feedback`、`/api/reviews`，并在 index.html 中注入 `window.LOOP_HOSTED=true`。独立静态部署不会请求这些接口。
+
+### 生产托管模式
+
+通过 `/?review=<UUID>` 打开不可变方案；仅显示提交、原文、批注和总体意见，不显示演示或虚构内容提示，也不预载示例方案。新建、设置、目标选择和 Markdown 编辑隐藏并禁用。提交强制走同源 `/api/session` 与 `/api/feedback`，保留原方案 agentName/reviewId/revision，不使用浏览器中旧外部 Webhook。Agent 长期凭证只在服务端使用。切换保护、草稿恢复、幂等重试和完成页沿用现有逻辑。无有效方案时不能提交，加载另一方案失败也不能误提交旧方案。宽表格/代码可在正文内横向滚动，手机按钮扩大触控范围。
 
 ### 可选托管演示模式
 
@@ -83,7 +87,7 @@ start/end 是净化后的 Markdown DOM 中所有文字节点拼接后的 UTF-16 
 
 收到 `?review=<UUID>` 链接时，同源 GET `/api/reviews/<UUID>` 获取不可变方案与标题、Agent、revision 元数据。空白/初始演示页面自动打开；已有原文、批注、总体意见或草稿时必须确认切换。取消或加载失败保持当前内容，并允许重新打开。同一 reviewId 刷新只恢复本地状态，不覆盖修改。反馈关联顶层 `reviewId` 和 `revision`。点新建或应用实际改变的 Markdown 会清除该关联和地址栏 review 参数，转为手动文档；未改变原文的应用操作保留关联。独立静态模式不请求此 API。
 
-方案链接可由任意持有链接的人读取，仅用于虚构测试；反馈没有公开读取接口。本入口不表示已自动唤醒 Agent。
+方案链接可由任意持有链接的人读取；反馈没有公开读取接口，Agent 通过鉴权轮询或配置的服务端 Webhook 接收。提交成功表示反馈已落盘，投递与 Agent 处理为后续事件。仅旧 demo 模式限于虚构测试内容。
 
 ## 极简审阅与提交完成
 
