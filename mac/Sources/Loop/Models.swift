@@ -6,8 +6,65 @@ struct Comment: Identifiable, Codable, Equatable {
     var length: Int
     var quote: String
     var body: String
+    /// Absolute paths of the images attached to the comment.
+    var images: [String] = []
 
     var range: NSRange { NSRange(location: location, length: length) }
+}
+
+extension Comment {
+    private enum CodingKeys: String, CodingKey { case id, location, length, quote, body, images }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        location = try container.decode(Int.self, forKey: .location)
+        length = try container.decode(Int.self, forKey: .length)
+        quote = try container.decode(String.self, forKey: .quote)
+        body = try container.decode(String.self, forKey: .body)
+        // Drafts saved before images could be attached have none.
+        images = try container.decodeIfPresent([String].self, forKey: .images) ?? []
+    }
+}
+
+/// A 总评 note: text, images, or both.
+struct GeneralNote: Codable, Equatable, ExpressibleByStringLiteral {
+    var text: String
+    /// Absolute paths of the attached images.
+    var images: [String] = []
+
+    init(text: String, images: [String] = []) {
+        self.text = text
+        self.images = images
+    }
+
+    init(stringLiteral text: String) { self.init(text: text) }
+
+    var isEmpty: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && images.isEmpty }
+
+    private enum CodingKeys: String, CodingKey { case text, images }
+
+    // A note without images is stored as a bare string, as every note was before images.
+    init(from decoder: Decoder) throws {
+        if let text = try? decoder.singleValueContainer().decode(String.self) {
+            self.init(text: text)
+            return
+        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(text: try container.decodeIfPresent(String.self, forKey: .text) ?? "",
+                  images: try container.decodeIfPresent([String].self, forKey: .images) ?? [])
+    }
+
+    func encode(to encoder: Encoder) throws {
+        if images.isEmpty {
+            var container = encoder.singleValueContainer()
+            try container.encode(text)
+        } else {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(text, forKey: .text)
+            try container.encode(images, forKey: .images)
+        }
+    }
 }
 
 /// A `- [ ]` or `- [x]` item in the plan.
@@ -26,11 +83,11 @@ struct Session: Codable {
     var text = ""
     var comments: [Comment] = []
     /// 总评 notes, in the order they were written.
-    var generals: [String] = []
+    var generals: [GeneralNote] = []
     /// Task items the reviewer ticked or unticked, by `TaskItem.location`.
     var toggled: [Int] = []
 
-    init(text: String = "", comments: [Comment] = [], generals: [String] = [], toggled: [Int] = []) {
+    init(text: String = "", comments: [Comment] = [], generals: [GeneralNote] = [], toggled: [Int] = []) {
         self.text = text
         self.comments = comments
         self.generals = generals
@@ -44,10 +101,10 @@ struct Session: Codable {
         text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
         comments = try container.decodeIfPresent([Comment].self, forKey: .comments) ?? []
         // Drafts saved before 总评 became a list hold one `general` string.
-        if let generals = try container.decodeIfPresent([String].self, forKey: .generals) {
+        if let generals = try container.decodeIfPresent([GeneralNote].self, forKey: .generals) {
             self.generals = generals
         } else if let general = try container.decodeIfPresent(String.self, forKey: .general), !general.isEmpty {
-            generals = [general]
+            generals = [GeneralNote(text: general)]
         }
         toggled = try container.decodeIfPresent([Int].self, forKey: .toggled) ?? []
     }

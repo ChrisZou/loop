@@ -321,6 +321,142 @@ enum SelfTest {
             cardStore.draftBody
         }
 
+        // Images: each goes into the feedback as a path the agent can open.
+        let pictured = FeedbackExporter.export(text: text, comments: [
+            Comment(location: 0, length: 3, quote: "", body: "看图", images: ["/x/1.png"]),
+            Comment(location: 4, length: 3, quote: "", body: " ", images: ["/x/2.png", "/x/3.png"])
+        ], generals: [GeneralNote(text: "范围再收", images: ["/x/4.png"]), GeneralNote(text: " ", images: ["/x/5.png"])])
+        check(pictured == """
+        以下是我对你方案的逐条反馈，请据此修改出下一版：
+        （「附图」是本机上的图片文件，请打开查看。）
+
+        1. 原文：
+           > 第一行
+           意见：看图
+           附图：/x/1.png
+
+        2. 原文：
+           > 第二行
+           附图：/x/2.png
+           附图：/x/3.png
+
+        总体意见：
+        1. 范围再收
+           附图：/x/4.png
+        2. 附图：/x/5.png
+        """, "images export as 附图 paths, after the comment or note they belong to")
+        check(FeedbackExporter.export(text: text, comments: [], generals: [GeneralNote(text: "", images: ["/x/5.png"])])
+              .hasSuffix("总体意见：\n附图：/x/5.png"), "a 总评 of only an image")
+        let plainNotes = (try? JSONEncoder().encode(Session(text: "a", generals: ["只有字"]))).map { String(decoding: $0, as: UTF8.self) }
+        check(plainNotes?.contains(#""generals":["只有字"]"#) == true, "notes without images save as plain strings, as before")
+        let withImages = Session(text: "a", comments: [Comment(location: 0, length: 1, quote: "a", body: "", images: ["/x/1.png"])],
+                                 generals: [GeneralNote(text: "看图", images: ["/x/2.png"])])
+        let reread = (try? JSONEncoder().encode(withImages)).flatMap { try? JSONDecoder().decode(Session.self, from: $0) }
+        check(reread?.comments == withImages.comments && reread?.generals == withImages.generals, "images survive in the draft")
+        let oldComment = try? JSONDecoder().decode(Session.self, from: Data(
+            #"{"text":"abc","comments":[{"id":"7D0B2A52-5B8E-4E59-9C1E-1D4B8E9E0A11","location":0,"length":1,"quote":"a","body":"旧"}],"generals":["旧"]}"#.utf8))
+        check(oldComment?.comments.first?.images == [] && oldComment?.generals == ["旧"], "drafts from before images still load")
+
+        let images = NSPasteboard(name: NSPasteboard.Name("loop-selftest-\(UUID().uuidString)"))
+        defer { images.releaseGlobally() }
+        let pixel = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 4, pixelsHigh: 3, bitsPerSample: 8, samplesPerPixel: 4,
+                                     hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        let png = pixel.representation(using: .png, properties: [:])!
+        let imageStore = reviewing(Session(text: text))
+        defer { try? FileManager.default.removeItem(at: imageStore.attachmentFolder) }
+        imageStore.selection = NSRange(location: 0, length: 3)
+        imageStore.addComment()
+        images.clearContents()
+        images.setData(png, forType: .png)
+        check(imageStore.pasteImages(from: images, to: .comment) && imageStore.draftImages.count == 1
+              && imageStore.draftImages[0].hasPrefix(imageStore.attachmentFolder.path) && imageStore.draftImages[0].hasSuffix(".png")
+              && FileManager.default.contents(atPath: imageStore.draftImages[0]) == png, "pasting a screenshot saves it into the review's folder")
+        images.clearContents()
+        images.setData(pixel.tiffRepresentation!, forType: .tiff)
+        check(imageStore.pasteImages(from: images, to: .comment) && imageStore.draftImages.last?.hasSuffix(".png") == true,
+              "a TIFF on the pasteboard is saved as PNG")
+        images.clearContents()
+        images.setString("一段文字", forType: .string)
+        check(!imageStore.pasteImages(from: images, to: .comment) && imageStore.draftImages.count == 2, "pasting text is left to the editor")
+        let loose = FileManager.default.temporaryDirectory.appendingPathComponent("loop-selftest-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: loose) }
+        try? FileManager.default.createDirectory(at: loose, withIntermediateDirectories: true)
+        let photo = loose.appendingPathComponent("照片.jpg")
+        let note = loose.appendingPathComponent("说明.txt")
+        try? pixel.representation(using: .jpeg, properties: [:])?.write(to: photo)
+        try? "不是图片".write(to: note, atomically: true, encoding: .utf8)
+        images.clearContents()
+        images.writeObjects([photo as NSURL])
+        check(imageStore.pasteImages(from: images, to: .comment) && imageStore.draftImages.last?.hasSuffix(".jpeg") == true,
+              "a copied image file is attached as a copy")
+        imageStore.attachImages(files: [note], to: .comment)
+        check(imageStore.draftImages.count == 3, "files that are not images are ignored")
+        imageStore.saveDraft()
+        check(imageStore.comments.last?.images.count == 3 && imageStore.comments.last?.body == "", "a comment can be just images")
+        if let saved = imageStore.comments.last {
+            imageStore.edit(saved)
+            imageStore.removeImage(saved.images[0], from: .comment)
+            imageStore.cancelDraft()
+            check(imageStore.comments.last?.images == saved.images, "removing an image and cancelling keeps the saved comment")
+        }
+        imageStore.composingGeneral = true
+        imageStore.attachImages(files: [photo], to: .general)
+        check(imageStore.canCommitShortcut, "an image alone can be filed as a 总评")
+        imageStore.commitShortcut()
+        check(imageStore.generals.last?.text == "" && imageStore.generals.last?.images.count == 1 && imageStore.generalImages.isEmpty,
+              "⌘↩ files the composer's images with its text")
+        imageStore.editGeneral(at: 0)
+        check(imageStore.generalImages.count == 1, "changing a 总评 brings its images back into the composer")
+        imageStore.cancelGeneral()
+
+        // ⌘V and drag-and-drop through the real card in a window.
+        Attachments.pasteboard = images
+        defer { Attachments.pasteboard = .general }
+        let pasteStore = reviewing(Session(text: text))
+        defer { try? FileManager.default.removeItem(at: pasteStore.attachmentFolder) }
+        pasteStore.selection = NSRange(location: 0, length: 3)
+        pasteStore.addComment()
+        let holder = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
+        let pasteWindow = NSWindow(contentRect: holder.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        pasteWindow.contentView = holder
+        let card = CardView(rootView: AnyView(EmptyView()))
+        holder.addSubview(card)
+        card.show(CommentEditorCard(store: pasteStore, number: 1), below: NSRect(x: 300, y: 420, width: 1, height: 16), in: holder)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        func cardEditor(in view: NSView) -> NSTextView? {
+            if let text = view as? NSTextView, text.isEditable { return text }
+            return view.subviews.lazy.compactMap(cardEditor).first
+        }
+        let before = card.frame.height
+        if let field = cardEditor(in: card) {
+            pasteWindow.makeFirstResponder(field)
+            check(!field.registeredDraggedTypes.contains(.fileURL), "image files dropped on the text go to the card, not in as paths")
+            images.clearContents()
+            images.setData(png, forType: .png)
+            let commandV = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+                                            windowNumber: pasteWindow.windowNumber, context: nil, characters: "v",
+                                            charactersIgnoringModifiers: "v", isARepeat: false, keyCode: 9)!
+            NSApp.sendEvent(commandV)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+            check(pasteStore.draftImages.count == 1 && field.string.isEmpty, "⌘V in the card attaches a screenshot")
+            check(card.frame.height > before + 40, "the card grows to show the image")
+        } else {
+            check(false, "the card's editor is hosted")
+        }
+
+        let pruneRoot = loose.appendingPathComponent("support")
+        let monthAgo = Date(timeIntervalSinceNow: -40 * 24 * 3600)
+        for name in ["old", "kept", "fresh"] {
+            let folder = pruneRoot.appendingPathComponent("attachments/\(name)")
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            if name != "fresh" { try? FileManager.default.setAttributes([.modificationDate: monthAgo], ofItemAtPath: folder.path) }
+        }
+        try? FileManager.default.createDirectory(at: pruneRoot.appendingPathComponent("reviews"), withIntermediateDirectories: true)
+        try? Data("{}".utf8).write(to: pruneRoot.appendingPathComponent("reviews/kept.json"))
+        Attachments.prune(pruneRoot)
+        let left = (try? FileManager.default.contentsOfDirectory(atPath: pruneRoot.appendingPathComponent("attachments").path))?.sorted()
+        check(left == ["fresh", "kept"], "old images go once their review is over for 30 days")
+
         // Review mode: the agent gets the export, or an explicit approval when there is nothing to say.
         let reviewStore = reviewing(Session(text: text))
         check(!reviewStore.hasFeedback && reviewStore.submission == ReviewRequest.approval, "empty review submits approval")

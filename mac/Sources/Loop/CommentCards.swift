@@ -8,19 +8,24 @@ final class CardView: NSHostingView<AnyView> {
     static let shadowRoom: CGFloat = 24
     /// A preview never takes the pointer, or hovering would flicker between the text and the card.
     var passesClicks = false
+    /// What the card hangs from, so it can be placed again when its content grows.
+    private var anchor: (rect: NSRect, view: NSView)?
 
     override func hitTest(_ point: NSPoint) -> NSView? { passesClicks ? nil : super.hitTest(point) }
 
     func show<Content: View>(_ content: Content, below anchor: NSRect, in textView: NSView) {
         rootView = AnyView(content
             .shadow(color: .black.opacity(0.13), radius: 18, y: 8)
-            .padding(Self.shadowRoom))
+            .padding(Self.shadowRoom)
+            // An attached image makes the card taller; it keeps hanging from the same spot.
+            .onGeometryChange(for: CGSize.self, of: \.size) { [weak self] _ in self?.refit() })
         isHidden = false
         place(below: anchor, in: textView)
     }
 
     /// Hangs the card just under `anchor` (in `textView`'s coordinates), or above it near the bottom edge.
     func place(below anchor: NSRect, in textView: NSView) {
+        self.anchor = (anchor, textView)
         guard let parent = superview, !isHidden else { return }
         let size = fittingSize
         let room = Self.shadowRoom
@@ -30,6 +35,13 @@ final class CardView: NSHostingView<AnyView> {
         origin.x = min(max(origin.x, 8 - room), parent.bounds.width - size.width - 8 + room)
         if origin.y < 8 - room { origin.y = min(target.maxY + 6 - room, parent.bounds.height - size.height + room - 8) }
         frame = NSRect(origin: origin, size: size)
+    }
+
+    private func refit() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.isHidden, let anchor = self.anchor, self.fittingSize != self.frame.size else { return }
+            self.place(below: anchor.rect, in: anchor.view)
+        }
     }
 
     func contains(windowPoint: NSPoint) -> Bool {
@@ -47,6 +59,7 @@ final class CardView: NSHostingView<AnyView> {
     }
 
     func dismiss() {
+        anchor = nil
         isHidden = true
         rootView = AnyView(EmptyView())
     }
@@ -112,11 +125,14 @@ struct CommentPreview: View {
                 Text("点击圈码修改").font(.system(size: 11)).foregroundStyle(Color(Theme.secondary))
             }
             QuoteText(quote: comment.quote)
-            Text(comment.body)
-                .font(.system(size: 14)).lineSpacing(4)
-                .foregroundStyle(Color(Theme.ink))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
+            if !comment.body.isEmpty {
+                Text(comment.body)
+                    .font(.system(size: 14)).lineSpacing(4)
+                    .foregroundStyle(Color(Theme.ink))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !comment.images.isEmpty { ImageStrip(paths: comment.images, side: 44).padding(.top, 2) }
         }
         .card(width: 310)
     }
@@ -128,9 +144,9 @@ struct CommentEditorCard: View {
     let number: Int
     @FocusState private var focused: Bool
     @State private var composing: String?
+    @State private var dropping = false
 
     private var existing: Bool { store.comments.contains { $0.id == store.draft?.id } }
-    private var empty: Bool { store.draftBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -156,7 +172,8 @@ struct CommentEditorCard: View {
                 .frame(height: 96)
                 .overlay(alignment: .topLeading) {
                     if (composing ?? store.draftBody).isEmpty {
-                        Text("写下你的意见…").font(.system(size: 14)).foregroundStyle(Color(Theme.secondary))
+                        Text(store.draftImages.isEmpty ? "写下你的意见，截图可直接粘贴" : "说说图里的问题（可选）")
+                            .font(.system(size: 14)).foregroundStyle(Color(Theme.secondary))
                             .padding(.leading, 11).padding(.top, 8).allowsHitTesting(false)
                     }
                 }
@@ -165,20 +182,38 @@ struct CommentEditorCard: View {
                     .strokeBorder(Color(Theme.vermilion).opacity(focused ? 0.45 : 0.15)))
                 .focused($focused)
                 .composition($composing, focused: focused)
+                .pastesImages { store.pasteImages(from: $0, to: .comment) }
                 .accessibilityLabel("批注意见")
                 .onExitCommand(perform: store.cancelDraft)
+            if !store.draftImages.isEmpty {
+                ImageStrip(paths: store.draftImages) { store.removeImage($0, from: .comment) }
+                    .padding(.top, 2)
+            }
             HStack(spacing: 6) {
+                AddImageButton { store.attachImages(files: $0, to: .comment) }
+                    .padding(.leading, 2)
                 Spacer()
                 Button("取消", action: store.cancelDraft).buttonStyle(PlainToolButtonStyle())
                 Button { store.saveDraft() } label: {
                     HStack(spacing: 6) { Text("保存"); Text("⌘↩").font(.system(size: 11.5)).opacity(0.65) }
                 }
                 .buttonStyle(InkButtonStyle())
-                .disabled(empty)
+                .disabled(store.draftIsEmpty)
                 .help("保存（⌘↩）")
             }
         }
         .card(width: 340)
+        .overlay {
+            if dropping {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color(Theme.vermilion), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                    .allowsHitTesting(false)
+            }
+        }
+        .onDrop(of: [.fileURL, .image], isTargeted: $dropping) { providers in
+            store.dropImages(providers, to: .comment)
+            return true
+        }
         .tint(Color(Theme.vermilion))
         .onAppear { DispatchQueue.main.async { focused = true } }
     }

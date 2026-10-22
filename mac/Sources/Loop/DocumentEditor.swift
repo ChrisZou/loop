@@ -603,7 +603,7 @@ struct DocumentEditor: NSViewRepresentable {
                                     width: CommentMarker.size, height: CommentMarker.size).integral
                 view.number = index + 1
                 view.active = store.activeID == comment.id
-                view.setAccessibilityLabel("第 \(index + 1) 条批注：\(comment.body)")
+                view.setAccessibilityLabel("第 \(index + 1) 条批注：\(comment.body)" + (comment.images.isEmpty ? "" : "（附图 \(comment.images.count) 张）"))
                 placed.insert(comment.id)
             }
             for (id, marker) in markers where !placed.contains(id) {
@@ -709,9 +709,11 @@ struct DocumentEditor: NSViewRepresentable {
         private func watchOutsideClicks() {
             guard clickMonitor == nil else { return }
             clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
-                guard let self, self.editorCard?.contains(windowPoint: event.locationInWindow) != true || event.window !== self.container?.window,
+                // Picking images happens in a sheet, which is not outside the card.
+                guard let self, !(event.window is NSSavePanel),
+                      self.editorCard?.contains(windowPoint: event.locationInWindow) != true || event.window !== self.container?.window,
                       let id = self.editorID, self.store.draft?.id == id else { return event }
-                if self.store.draftBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { self.store.cancelDraft() }
+                if self.store.draftIsEmpty { self.store.cancelDraft() }
                 else { self.store.saveDraft() }
                 return event
             }

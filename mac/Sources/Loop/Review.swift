@@ -36,12 +36,21 @@ struct ReviewRequest {
 
     var title: String { source.lastPathComponent }
 
-    /// Unsubmitted comments survive an accidental close and come back when the same plan is reviewed again.
-    var draftURL: URL {
-        let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
-        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Loop/reviews/\(digest.prefix(16)).json")
+    /// Loop's folder in Application Support: drafts in `reviews/`, attached images in `attachments/`.
+    static var support: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Loop")
     }
+
+    /// Names this plan's draft and images; the same plan text always gets the same key.
+    private var key: String {
+        String(SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined().prefix(16))
+    }
+
+    /// Unsubmitted comments survive an accidental close and come back when the same plan is reviewed again.
+    var draftURL: URL { Self.support.appendingPathComponent("reviews/\(key).json") }
+
+    /// Images attached during this review. They stay after 提交, so the agent can open them from the feedback.
+    var attachmentsURL: URL { Self.support.appendingPathComponent("attachments/\(key)") }
 
     func deliver(_ feedback: String) throws {
         let data = Data((feedback + "\n").utf8)

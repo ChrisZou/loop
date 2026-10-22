@@ -5,10 +5,12 @@ final class SessionStore: ObservableObject {
     @Published var comments: [Comment] { didSet { scheduleSave() } }
     /// Saved 总评 notes. The composer below the plan writes a new one into `generalDraft`,
     /// or changes the one at `editingGeneral`.
-    @Published var generals: [String] { didSet { scheduleSave() } }
+    @Published var generals: [GeneralNote] { didSet { scheduleSave() } }
     /// Task items whose box the reviewer changed, by `TaskItem.location`. Clicking again changes it back.
     @Published var toggled: Set<Int> { didSet { scheduleSave() } }
     @Published var generalDraft = ""
+    /// Images attached in the composer, filed with `generalDraft`.
+    @Published var generalImages: [String] = []
     @Published var editingGeneral: Int?
     /// The composer has focus, so ⌘↩ saves the 总评 instead of starting a comment.
     @Published var composingGeneral = false
@@ -16,6 +18,7 @@ final class SessionStore: ObservableObject {
     @Published var activeID: UUID?
     @Published var draft: Comment?
     @Published var draftBody = ""
+    @Published var draftImages: [String] = []
     @Published var navigationRequest: UUID?
     @Published var preview = false
     @Published var confirmSubmit = false
@@ -28,6 +31,8 @@ final class SessionStore: ObservableObject {
     let hidden: IndexSet
     /// The plan's `- [ ]` items, in order.
     let tasks: [TaskItem]
+    /// Where attached images are saved.
+    let attachmentFolder: URL
     private(set) var submitted = false
     /// Demo and self-test stores never touch drafts on disk.
     private let persists: Bool
@@ -37,6 +42,9 @@ final class SessionStore: ObservableObject {
     init(review: ReviewRequest, restoring session: Session? = nil) {
         self.review = review
         persists = session == nil
+        attachmentFolder = persists ? review.attachmentsURL
+            : FileManager.default.temporaryDirectory.appendingPathComponent("loop-attachments-\(UUID().uuidString)")
+        if persists { DispatchQueue.global(qos: .utility).async { Attachments.prune() } }
         var restored = Session(text: review.text)
         if let session {
             restored = session
@@ -96,24 +104,29 @@ final class SessionStore: ObservableObject {
         draft = Comment(location: range.location, length: range.length,
                         quote: CommentRanges.visibleText(of: range, in: text, hidden: hidden), body: "")
         draftBody = ""
+        draftImages = []
         activeID = draft?.id
     }
 
     func edit(_ comment: Comment) {
         draft = comment
         draftBody = comment.body
+        draftImages = comment.images
         activeID = comment.id
     }
 
+    /// Neither words nor images yet: closing the card drops it instead of saving it.
+    var draftIsEmpty: Bool { draftBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && draftImages.isEmpty }
+
     func saveDraft() {
-        guard var comment = draft else { return }
-        let body = draftBody.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !body.isEmpty else { return }
-        comment.body = body
+        guard var comment = draft, !draftIsEmpty else { return }
+        comment.body = draftBody.trimmingCharacters(in: .whitespacesAndNewlines)
+        comment.images = draftImages
         if let index = comments.firstIndex(where: { $0.id == comment.id }) { comments[index] = comment }
         else { comments.append(comment) }
         draft = nil
         draftBody = ""
+        draftImages = []
         selection = NSRange(location: NSMaxRange(selection), length: 0)
         navigationRequest = UUID()
     }
@@ -121,7 +134,41 @@ final class SessionStore: ObservableObject {
     func cancelDraft() {
         draft = nil
         draftBody = ""
+        draftImages = []
         if !comments.contains(where: { $0.id == activeID }) { activeID = nil }
+    }
+
+    /// Which editor an image goes into: the comment card or the 总评 composer.
+    enum ImageTarget { case comment, general }
+
+    func attach(_ paths: [String], to target: ImageTarget) {
+        switch target {
+        case .comment: draftImages += paths
+        case .general: generalImages += paths
+        }
+    }
+
+    /// Attaches what ⌘V would paste, if it is an image; returns false so text pastes as usual.
+    func pasteImages(from pasteboard: NSPasteboard, to target: ImageTarget) -> Bool {
+        let paths = Attachments.save(from: pasteboard, into: attachmentFolder)
+        attach(paths, to: target)
+        return !paths.isEmpty
+    }
+
+    func attachImages(files: [URL], to target: ImageTarget) {
+        attach(Attachments.save(files: files, into: attachmentFolder), to: target)
+    }
+
+    func dropImages(_ providers: [NSItemProvider], to target: ImageTarget) {
+        Attachments.save(providers, into: attachmentFolder) { [weak self] in self?.attach($0, to: target) }
+    }
+
+    /// Takes an image off the comment or note being written. The file stays: a saved version may still show it.
+    func removeImage(_ path: String, from target: ImageTarget) {
+        switch target {
+        case .comment: draftImages.removeAll { $0 == path }
+        case .general: generalImages.removeAll { $0 == path }
+        }
     }
 
     func remove(_ id: UUID) {
@@ -130,26 +177,32 @@ final class SessionStore: ObservableObject {
         if activeID == id { activeID = nil }
     }
 
-    /// Files the composer's text as a 总评 note — a new one, or the one being changed — and empties the composer.
+    /// What the composer holds, as the note it would file.
+    var generalNote: GeneralNote {
+        GeneralNote(text: generalDraft.trimmingCharacters(in: .whitespacesAndNewlines), images: generalImages)
+    }
+
+    /// Files the composer's text and images as a 总评 note — a new one, or the one being changed — and empties the composer.
     func saveGeneral() {
-        let note = generalDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let note = generalNote
         if let index = editingGeneral, generals.indices.contains(index) {
             if note.isEmpty { generals.remove(at: index) } else { generals[index] = note }
         } else if !note.isEmpty {
             generals.append(note)
         }
-        generalDraft = ""
-        editingGeneral = nil
+        cancelGeneral()
     }
 
     func editGeneral(at index: Int) {
         guard generals.indices.contains(index) else { return }
         editingGeneral = index
-        generalDraft = generals[index]
+        generalDraft = generals[index].text
+        generalImages = generals[index].images
     }
 
     func cancelGeneral() {
         generalDraft = ""
+        generalImages = []
         editingGeneral = nil
     }
 
@@ -165,8 +218,8 @@ final class SessionStore: ObservableObject {
     }
 
     var canCommitShortcut: Bool {
-        if draft != nil { return !draftBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        if composingGeneral { return editingGeneral != nil || !generalDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        if draft != nil { return !draftIsEmpty }
+        if composingGeneral { return editingGeneral != nil || !generalNote.isEmpty }
         return canAdd
     }
 
@@ -174,7 +227,7 @@ final class SessionStore: ObservableObject {
     func requestSubmit() {
         saveGeneral()
         if draft != nil {
-            if draftBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { cancelDraft() } else { saveDraft() }
+            if draftIsEmpty { cancelDraft() } else { saveDraft() }
         }
         if hasFeedback { submit() } else { confirmSubmit = true }
     }

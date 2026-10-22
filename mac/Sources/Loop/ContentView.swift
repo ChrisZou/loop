@@ -91,6 +91,7 @@ struct FeedbackBar: View {
     @ObservedObject var store: SessionStore
     @FocusState private var focused: Bool
     @State private var composing: String?
+    @State private var dropping = false
 
     /// What the composer shows, including pinyin an input method is still composing.
     private var shown: String { composing ?? store.generalDraft }
@@ -146,58 +147,76 @@ struct FeedbackBar: View {
                 .fill(Color(Theme.rule))
                 .frame(width: 1, height: 15)
                 .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 2 }
-            // A hidden copy of the text sets the height (up to six lines) and the baseline the labels align to;
-            // the editor laid over it scrolls past six lines.
-            Text(shown.isEmpty || shown.hasSuffix("\n") ? shown + " " : shown)
-                .font(.system(size: 14)).lineSpacing(3)
-                .lineLimit(6)
-                .padding(.horizontal, 5)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .hidden()
-                .accessibilityHidden(true)
-                .overlay(alignment: .topLeading) {
-                    if shown.isEmpty {
-                        Text(store.generals.isEmpty ? "读完整份方案后的总体意见（可选）" : "再写一条总评…")
-                            .font(.system(size: 14))
-                            .foregroundStyle(Color(Theme.secondary))
-                            .padding(.horizontal, 5)
-                            .allowsHitTesting(false)
-                    }
+            VStack(alignment: .leading, spacing: 10) {
+                field
+                if !store.generalImages.isEmpty {
+                    ImageStrip(paths: store.generalImages, side: 44) { store.removeImage($0, from: .general) }
+                        .padding(.horizontal, 5)
+                        .padding(.bottom, 2)
                 }
-                .overlay {
-                    TextEditor(text: $store.generalDraft)
-                        .font(.system(size: 14)).lineSpacing(3)
-                        .foregroundStyle(Color(Theme.ink))
-                        .scrollContentBackground(.hidden)
-                        .scrollIndicators(.never)
-                        .focused($focused)
-                        .composition($composing, focused: focused)
-                        .accessibilityLabel("总评")
-                        .onExitCommand {
-                            // Esc drops a change to a saved note; a new note keeps its text and just steps away.
-                            if store.editingGeneral != nil { store.cancelGeneral() } else { focused = false }
-                        }
-                }
+            }
             if let index = store.editingGeneral {
                 Text("修改第 \(index + 1) 条").font(.system(size: 11.5, weight: .medium)).foregroundStyle(Color(Theme.vermilion)).fixedSize()
             }
-            if focused || !store.generalDraft.isEmpty {
+            if focused || !store.generalNote.isEmpty {
                 Text("⌘↩ 保存").font(.system(size: 11.5)).foregroundStyle(Color(Theme.secondary)).fixedSize()
             }
+            AddImageButton { store.attachImages(files: $0, to: .general) }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 13)
         .background(RoundedRectangle(cornerRadius: 23, style: .continuous).fill(Color(Theme.sheet)))
         .overlay(RoundedRectangle(cornerRadius: 23, style: .continuous)
-            .strokeBorder(focused ? Color(Theme.vermilion).opacity(0.35) : Color(Theme.rule)))
+            .strokeBorder(dropping ? Color(Theme.vermilion) : focused ? Color(Theme.vermilion).opacity(0.35) : Color(Theme.rule),
+                          style: StrokeStyle(lineWidth: dropping ? 1.5 : 1, dash: dropping ? [5, 4] : [])))
         .shadow(color: .black.opacity(0.07), radius: 14, y: 6)
+        .onDrop(of: [.fileURL, .image], isTargeted: $dropping) { providers in
+            store.dropImages(providers, to: .general)
+            return true
+        }
+    }
+
+    private var field: some View {
+        // A hidden copy of the text sets the height (up to six lines) and the baseline the labels align to;
+        // the editor laid over it scrolls past six lines.
+        Text(shown.isEmpty || shown.hasSuffix("\n") ? shown + " " : shown)
+            .font(.system(size: 14)).lineSpacing(3)
+            .lineLimit(6)
+            .padding(.horizontal, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .hidden()
+            .accessibilityHidden(true)
+            .overlay(alignment: .topLeading) {
+                if shown.isEmpty {
+                    Text(store.generals.isEmpty ? "读完整份方案后的总体意见（可选）" : "再写一条总评…")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color(Theme.secondary))
+                        .padding(.horizontal, 5)
+                        .allowsHitTesting(false)
+                }
+            }
+            .overlay {
+                TextEditor(text: $store.generalDraft)
+                    .font(.system(size: 14)).lineSpacing(3)
+                    .foregroundStyle(Color(Theme.ink))
+                    .scrollContentBackground(.hidden)
+                    .scrollIndicators(.never)
+                    .focused($focused)
+                    .composition($composing, focused: focused)
+                    .pastesImages { store.pasteImages(from: $0, to: .general) }
+                    .accessibilityLabel("总评")
+                    .onExitCommand {
+                        // Esc drops a change to a saved note; a new note keeps its text and just steps away.
+                        if store.editingGeneral != nil { store.cancelGeneral() } else { focused = false }
+                    }
+            }
     }
 }
 
 /// One saved 总评 note: click to change it in the composer, or delete it.
 private struct GeneralNoteRow: View {
     let number: Int
-    let note: String
+    let note: GeneralNote
     let editing: Bool
     let edit: () -> Void
     let remove: () -> Void
@@ -209,11 +228,14 @@ private struct GeneralNoteRow: View {
                 .font(Font(Theme.serif(14)))
                 .foregroundStyle(Color(Theme.vermilion))
                 .frame(width: 16)
-            Text(note)
-                .font(.system(size: 13.5)).lineSpacing(2)
-                .foregroundStyle(Color(Theme.ink))
-                .lineLimit(2)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 8) {
+                Text(note.text.isEmpty ? "附图" : note.text)
+                    .font(.system(size: 13.5)).lineSpacing(2)
+                    .foregroundStyle(Color(note.text.isEmpty ? Theme.secondary : Theme.ink))
+                    .lineLimit(2)
+                if !note.images.isEmpty { ImageStrip(paths: note.images, side: 36) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             if editing {
                 Text("修改中").font(.system(size: 11.5, weight: .medium)).foregroundStyle(Color(Theme.vermilion))
             } else if hovering {
@@ -235,7 +257,7 @@ private struct GeneralNoteRow: View {
         .onTapGesture(perform: edit)
         .onHover { hovering = $0 }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("第 \(number) 条总评：\(note)")
+        .accessibilityLabel("第 \(number) 条总评：\(note.text)" + (note.images.isEmpty ? "" : "（附图 \(note.images.count) 张）"))
     }
 }
 
