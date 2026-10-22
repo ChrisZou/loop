@@ -24,7 +24,7 @@ npm start
 | `LOOP_PUBLIC_URL` | `http://<HOST>:<PORT>` | 对外 origin，例如 `https://loop.weallwitness.com`；用于 reviewUrl 和浏览器 Origin 校验，生产部署必须设置 |
 | `LOOP_WEBHOOKS_FILE` | `<data dir>/../webhooks.json` | Agent 名称到 Webhook 的映射 |
 
-复制 `webhooks.example.json` 到配置路径并设置权限 `0600`。每个 Agent 对应 `{ "url": "https://agent.example/feedback", "bearer": "..." }`；空 URL 或无映射跳过转发，反馈仍可轮询。URL 只能来自此服务端配置，支持 HTTPS，以及本机调试用 localhost/127.0.0.1/[::1] HTTP。拒绝 URL 用户信息、片段和跳转。配置在每次投递时重新读取。密钥不要放在 URL 中。
+复制 `webhooks.example.json` 到配置路径并设置权限 `0600`。每个 Agent 对应 `{ "url": "https://agent.example/feedback", "bearer": "..." }`；键 `"*"` 为默认项，未匹配的 Agent 名称投递到它；空 URL 或无映射跳过转发，反馈仍可轮询。URL 只能来自此服务端配置，支持 HTTPS，以及本机调试用 localhost/127.0.0.1/[::1] HTTP。拒绝 URL 用户信息、片段和跳转。配置在每次投递时重新读取。密钥不要放在 URL 中。
 
 ## API
 

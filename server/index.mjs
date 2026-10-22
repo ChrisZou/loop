@@ -129,7 +129,7 @@ export async function createLoopServer({
       const delivery = { status:'pending', attempts:record.delivery.attempts + 1, updatedAt:new Date().toISOString() };
       try {
         const config = await webhookConfig(webhooksFile);
-        target = Object.hasOwn(config, record.payload.agentName) ? config[record.payload.agentName] : null;
+        target = Object.hasOwn(config, record.payload.agentName) ? config[record.payload.agentName] : Object.hasOwn(config, '*') ? config['*'] : null;
         if (!target?.url) { delivery.status = 'skipped'; delivery.attempts--; }
         else {
           const response = await fetch(target.url, {
