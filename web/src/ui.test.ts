@@ -6,8 +6,9 @@ const input=(s:string,value:string)=>{($(s) as HTMLInputElement).value=value;$(s
 async function select(text:string){const walk=document.createTreeWalker($('#document'),NodeFilter.SHOW_TEXT);let n;while(n=walk.nextNode()){const i=n.textContent!.indexOf(text);if(i>=0){const r=document.createRange();r.setStart(n,i);r.setEnd(n,i+text.length);getSelection()!.removeAllRanges();getSelection()!.addRange(r);document.dispatchEvent(new Event('selectionchange'));await new Promise(r=>setTimeout(r,60));return;}}throw Error('missing');}
 async function add(){await select('选中任何一段文字');$('#selection-action').click();input('#comment-input','测试批注');$('#save-comment').click();}
 function settings(){ $('#settings').click();$('#add-agent').click();input('.agent-name','本地测试');input('.agent-url','http://localhost:8787/feedback');input('.agent-key','session-only-token');$('#settings-form').dispatchEvent(new Event('submit',{cancelable:true,bubbles:true}));}
-beforeEach(async()=>{vi.resetModules();sessionStorage.clear();vi.spyOn(window,'close').mockImplementation(()=>{});history.replaceState(null,'','/');delete (window as any).LOOP_DEMO;delete (window as any).LOOP_HOSTED;localStorage.clear();document.body.innerHTML='<div id="app"></div>';Range.prototype.getBoundingClientRect=()=>({x:0,y:0,left:10,right:100,top:10,bottom:30,width:90,height:20,toJSON(){}});HTMLDialogElement.prototype.showModal=function(){this.open=true;};HTMLDialogElement.prototype.close=function(){this.open=false;};await import('./main');});
-afterEach(()=>{vi.unstubAllGlobals();vi.restoreAllMocks();getSelection()?.removeAllRanges();});
+let documentListeners:Parameters<typeof document.addEventListener>[]=[];
+beforeEach(async()=>{documentListeners=[];const listen=document.addEventListener.bind(document);vi.spyOn(document,'addEventListener').mockImplementation((...args:Parameters<typeof document.addEventListener>)=>{documentListeners.push(args);listen(...args);});vi.resetModules();sessionStorage.clear();vi.spyOn(window,'close').mockImplementation(()=>{});history.replaceState(null,'','/');delete (window as any).LOOP_DEMO;delete (window as any).LOOP_HOSTED;localStorage.clear();document.body.innerHTML='<div id="app"></div>';Range.prototype.getBoundingClientRect=()=>({x:0,y:0,left:10,right:100,top:10,bottom:30,width:90,height:20,toJSON(){}});HTMLDialogElement.prototype.showModal=function(){this.open=true;};HTMLDialogElement.prototype.close=function(){this.open=false;};await import('./main');});
+afterEach(()=>{for(const args of documentListeners)document.removeEventListener(...args);vi.unstubAllGlobals();vi.restoreAllMocks();getSelection()?.removeAllRanges();});
 describe('UI behavior',()=>{
  it('clamps layout coordinates into the visual viewport without doubling offsets',()=>{
   const box={width:390,height:280,left:40,top:180};
@@ -15,22 +16,33 @@ describe('UI behavior',()=>{
   expect(clampPosition({left:60,bottom:200},{width:100,height:48},box)).toEqual({left:60,top:208});
   expect(clampPosition({left:-20,bottom:-20},{width:100,height:48},box)).toEqual({left:52,top:192});
  });
- it('suppresses the document context menu and captures touch selection promptly',async()=>{
+ it('suppresses the context menu and captures touch selection without clearing or replacing its range',async()=>{
   const menu=new Event('contextmenu',{cancelable:true});$('#document').dispatchEvent(menu);expect(menu.defaultPrevented).toBe(true);
-  $('#document').dispatchEvent(new Event('touchstart'));await select('选中任何一段文字');expect($('#selection-action').hidden).toBe(true);$('#document').dispatchEvent(new Event('touchend'));expect($('#selection-action').hidden).toBe(false);await new Promise(r=>requestAnimationFrame(r));expect(getSelection()!.rangeCount).toBe(0);
+  $('#document').dispatchEvent(new Event('touchstart'));await select('选中任何一段文字');const range=getSelection()!.getRangeAt(0),node=range.startContainer;
+  expect($('#selection-action').hidden).toBe(false);$('#document').dispatchEvent(new Event('touchend'));await new Promise(r=>requestAnimationFrame(r));
+  expect(getSelection()!.getRangeAt(0)).toBe(range);expect(node.isConnected).toBe(true);expect(getSelection()!.toString()).toBe('选中任何一段文字');expect(document.querySelector('.temp-selection')).toBeNull();
  });
- it('keeps a temporary selection after clearing native ranges and opens its captured quote',async()=>{
-  await select('选中任何一段文字');expect(getSelection()!.rangeCount).toBe(0);
-  document.dispatchEvent(new Event('selectionchange'));await new Promise(r=>setTimeout(r,30));
-  expect($('#selection-action').hidden).toBe(false);expect($('mark.temp-selection').textContent).toBe('选中任何一段文字');expect(document.querySelector('[data-annotation]')).toBeNull();
-  $('#selection-action').click();expect($('#quote').textContent).toBe('选中任何一段文字');$('#close-comment').click();expect(document.querySelector('.temp-selection')).toBeNull();expect($('#selection-action').hidden).toBe(true);
+ it('opens the captured quote while native selection remains adjustable',async()=>{
+  await select('选中任何一段文字');expect($('#selection-action').hidden).toBe(false);
+  await select('一个更轻盈的工作流');expect(getSelection()!.toString()).toBe('一个更轻盈的工作流');
+  $('#selection-action').click();expect($('#quote').textContent).toBe('一个更轻盈的工作流');expect($('#comment-popover').hidden).toBe(false);
  });
- it('replaces temporary selections and clears them on dismissal and viewport changes',async()=>{
-  await select('选中任何一段文字');await select('一个更轻盈的工作流');expect($('mark.temp-selection').textContent).toBe('一个更轻盈的工作流');
-  window.dispatchEvent(new Event('scroll'));expect(document.querySelector('.temp-selection')).toBeNull();expect($('#selection-action').hidden).toBe(true);
-  await select('选中任何一段文字');window.dispatchEvent(new Event('resize'));expect(document.querySelector('.temp-selection')).toBeNull();
-  await select('选中任何一段文字');document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));expect(document.querySelector('.temp-selection')).toBeNull();
-  await select('选中任何一段文字');$('#edit-tab').click();expect(document.querySelector('.temp-selection')).toBeNull();
+ it('hides pending selection when the user collapses the native range',async()=>{
+  await select('选中任何一段文字');getSelection()!.collapseToEnd();document.dispatchEvent(new Event('selectionchange'));expect($('#selection-action').hidden).toBe(true);
+ });
+ it('dismisses pending selection on blank pointerdown or click without blocking selection',async()=>{
+  for(const type of ['pointerdown','click']){await select('选中任何一段文字');const event=new Event(type,{bubbles:true,cancelable:true});$('#document').dispatchEvent(event);expect(event.defaultPrevented).toBe(false);expect($('#selection-action').hidden).toBe(true);expect(document.querySelector('.temp-selection')).toBeNull();$('#selection-action').click();expect($('#comment-popover').hidden).toBe(true);}
+  await select('一个更轻盈的工作流');expect($('#selection-action').hidden).toBe(false);
+ });
+ it('records comment drafts and closes on blank taps while controls and annotations still work',async()=>{
+  await add();$('[data-marker]').click();input('#comment-input','空白关闭前的草稿');$('#comment-input').dispatchEvent(new Event('pointerdown',{bubbles:true}));expect($('#comment-popover').hidden).toBe(false);
+  $('#document').dispatchEvent(new Event('pointerdown',{bubbles:true}));expect($('#comment-popover').hidden).toBe(true);expect(JSON.parse(localStorage.getItem('loop.drafts.v1')!).comment.text).toBe('空白关闭前的草稿');
+  $('[data-marker]').click();expect($('#comment-popover').hidden).toBe(false);expect(($('#comment-input') as HTMLTextAreaElement).value).toBe('空白关闭前的草稿');$('#document').click();expect($('#comment-popover').hidden).toBe(true);
+ });
+ it('clears pending UI on viewport changes, Escape and editor open',async()=>{
+  for(const dismiss of [()=>window.dispatchEvent(new Event('scroll')),()=>window.dispatchEvent(new Event('resize')),()=>document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'})),()=>$('#edit-tab').click()]){
+   await select('选中任何一段文字');dismiss();expect($('#selection-action').hidden).toBe(true);expect(document.querySelector('.temp-selection')).toBeNull();
+  }
  });
  it('repositions and scrolls the focused comment when the visual viewport changes',async()=>{
   const vv=Object.assign(new EventTarget(),{width:390,height:280,offsetLeft:40,offsetTop:180});
