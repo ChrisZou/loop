@@ -89,24 +89,49 @@ const doc=$('#document'), action=$<HTMLButtonElement>('#selection-action'), pop=
 function announce(text:string,error=false){$('#status').textContent=text;$('#status').classList.toggle('error',error);}
 function draw(){drawReviewContext();doc.innerHTML=renderMarkdown(state.document);paintAnnotations(doc,state.annotations);doc.querySelectorAll('a').forEach(a=>{a.target='_blank';a.rel='noopener noreferrer';});$('#count').textContent=`${state.annotations.length} 条批注`;}
 function drawAgents(){if(linkedMode)state.selected=sessionAgent.id;const agents=availableAgents();const select=$<HTMLSelectElement>('#agent-select');select.replaceChildren();if(!agents.length) select.add(new Option('选择 Agent',''));agents.forEach(a=>select.add(new Option(a.id===sessionAgent.id?'当前会话':a.name,a.id))); if(!agents.some(a=>a.id===state.selected))state.selected=agents[0]?.id||'';select.value=state.selected;}
-function hidePendingSelection(){action.hidden=true;if(pop.hidden)pending=null;}
+function hidePendingSelection(){action.hidden=true;if(pop.hidden){pending=null;pendingRect=null;keptPendingAfterCalloutClear=false;}}
 function discardCommentDraft(){drafts.comment=null;saveDrafts();closePopover();}
-function closePopover(){$<HTMLTextAreaElement>('#comment-input').value='';pop.hidden=true;editingId=null;pending=null;action.hidden=true;}
-let popAnchor={left:12,bottom:102};
-function place(el:HTMLElement,rect:{left:number;bottom:number}){const vv=window.visualViewport, box={width:vv?.width??innerWidth,height:vv?.height??innerHeight,left:vv?.offsetLeft??0,top:vv?.offsetTop??0};if(el===pop){popAnchor=rect;el.style.maxWidth=`${Math.max(0,box.width-24)}px`;el.style.maxHeight=`${Math.max(0,box.height-24)}px`;el.style.overflow='auto';}const size={width:el.offsetWidth||(el===pop?340:100),height:el.offsetHeight||(el===pop?320:48)};const pos=clampPosition(rect,size,box);el.style.left=`${pos.left}px`;el.style.top=`${pos.top}px`;}
+function closePopover(){$<HTMLTextAreaElement>('#comment-input').value='';pop.hidden=true;editingId=null;pending=null;pendingRect=null;keptPendingAfterCalloutClear=false;action.hidden=true;}
+let popAnchor={left:12,bottom:102}, pendingRect:{left:number;top:number;bottom:number}|null=null;
+let selectingByTouch=false, dismissCalloutAfterCapture=false, keptPendingAfterCalloutClear=false;
+function place(el:HTMLElement,rect:{left:number;bottom:number;top?:number}){const vv=window.visualViewport, box={width:vv?.width??innerWidth,height:vv?.height??innerHeight,left:vv?.offsetLeft??0,top:vv?.offsetTop??0};if(el===pop){popAnchor=rect;el.style.maxWidth=`${Math.max(0,box.width-24)}px`;el.style.maxHeight=`${Math.max(0,box.height-24)}px`;el.style.overflow='auto';}const size={width:el.offsetWidth||(el===pop?340:100),height:el.offsetHeight||(el===pop?320:48)};const pos=clampPosition(rect,size,box,el===action?{preferAbove:true}:undefined);el.style.left=`${pos.left}px`;el.style.top=`${pos.top}px`;}
 function repositionPopover(){if(!pop.hidden)place(pop,popAnchor);}
 function focusComment(){$<HTMLTextAreaElement>('#comment-input').focus();requestAnimationFrame(()=>{if(pop.hidden)return;pop.scrollIntoView?.({block:'nearest',inline:'nearest'});repositionPopover();});}
 function captureSelection(){
- if(!pop.hidden)return;const selection=window.getSelection();
- if(!selection?.rangeCount || selection.isCollapsed){hidePendingSelection();return;}
+ // touchstart→touchend: never clear the live range; handles must stay adjustable.
+ if(!pop.hidden||selectingByTouch)return;const selection=window.getSelection();
+ if(!selection?.rangeCount || selection.isCollapsed){
+  // After we cleared the native range to dismiss iOS callout, keep ＋批注 from pending offsets/quote.
+  // A real user collapse (no keptPending flag) still dismisses the floating button.
+  if(keptPendingAfterCalloutClear && pending){
+   if(pendingRect)place(action,pendingRect);
+   action.hidden=false;return;
+  }
+  hidePendingSelection();return;
+ }
  const r=selection.getRangeAt(0),anchor=rangeOffsets(doc,r);if(!anchor){hidePendingSelection();return;}
- // Keep the live range and its text nodes intact so Safari selection handles remain usable.
- pending=anchor;place(action,r.getBoundingClientRect());action.hidden=false;
+ const rect=r.getBoundingClientRect();
+ keptPendingAfterCalloutClear=false;
+ pending=anchor;pendingRect={left:rect.left,top:rect.top,bottom:rect.bottom};
+ place(action,pendingRect);action.hidden=false;
+ if(dismissCalloutAfterCapture){
+  const forAnchor=anchor;
+  // After touch settles: clear native selection only (no DOM text wrap) to dismiss iOS Copy/Look Up callout.
+  // Do not use mark.temp-selection — wrapping text nodes previously broke Safari selection handles.
+  requestAnimationFrame(()=>{requestAnimationFrame(()=>{
+   if(selectingByTouch||pending!==forAnchor)return;
+   keptPendingAfterCalloutClear=true;
+   window.getSelection()?.removeAllRanges();
+   if(pending===forAnchor && pendingRect){place(action,pendingRect);action.hidden=false;}
+  });});
+ }
 }
 document.addEventListener('selectionchange',captureSelection);
 doc.addEventListener('contextmenu',e=>e.preventDefault());
-doc.addEventListener('touchend',captureSelection);
-doc.addEventListener('touchcancel',hidePendingSelection);
+doc.addEventListener('touchstart',()=>{selectingByTouch=true;dismissCalloutAfterCapture=true;},{passive:true});
+doc.addEventListener('touchend',()=>{selectingByTouch=false;/* let Safari finalize selection before capture + delayed clear */setTimeout(captureSelection,50);});
+doc.addEventListener('touchcancel',()=>{selectingByTouch=false;dismissCalloutAfterCapture=false;hidePendingSelection();});
+document.addEventListener('pointerdown',e=>{if((e as PointerEvent).pointerType!=='touch')dismissCalloutAfterCapture=false;},true);
 function dismissOnBlank(e:Event){
  const target=e.target as Element;
  if(!doc.contains(target) || target.closest('[data-annotation],#selection-action,#comment-popover,a,button,input,textarea,select,label,summary,[contenteditable],[role="button"]'))return;

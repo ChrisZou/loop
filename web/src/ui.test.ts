@@ -16,11 +16,27 @@ describe('UI behavior',()=>{
   expect(clampPosition({left:60,bottom:200},{width:100,height:48},box)).toEqual({left:60,top:208});
   expect(clampPosition({left:-20,bottom:-20},{width:100,height:48},box)).toEqual({left:52,top:192});
  });
- it('suppresses the context menu and captures touch selection without clearing or replacing its range',async()=>{
+ it('preferAbove places above the selection when there is room, else falls back below',()=>{
+  const roomy={width:390,height:600,left:0,top:0};
+  expect(clampPosition({left:60,bottom:200,top:180},{width:100,height:48},roomy,{preferAbove:true})).toEqual({left:60,top:124});
+  const tight={width:390,height:280,left:40,top:180};
+  expect(clampPosition({left:60,bottom:200,top:190},{width:100,height:48},tight,{preferAbove:true})).toEqual({left:60,top:208});
+ });
+ it('suppresses context menu; after touch settles clears native range (no temp mark) and keeps ＋批注 above',async()=>{
   const menu=new Event('contextmenu',{cancelable:true});$('#document').dispatchEvent(menu);expect(menu.defaultPrevented).toBe(true);
+  // Room above the selection so preferAbove can place ＋批注 over the range (iOS callout is usually below).
+  Range.prototype.getBoundingClientRect=()=>({x:40,y:120,left:40,right:200,top:120,bottom:150,width:160,height:30,toJSON(){}});
   $('#document').dispatchEvent(new Event('touchstart'));await select('选中任何一段文字');const range=getSelection()!.getRangeAt(0),node=range.startContainer;
-  expect($('#selection-action').hidden).toBe(false);$('#document').dispatchEvent(new Event('touchend'));await new Promise(r=>requestAnimationFrame(r));
-  expect(getSelection()!.getRangeAt(0)).toBe(range);expect(node.isConnected).toBe(true);expect(getSelection()!.toString()).toBe('选中任何一段文字');expect(document.querySelector('.temp-selection')).toBeNull();
+  // During touchstart→touchend, never clear; handles stay adjustable. Button waits until settle.
+  expect(getSelection()!.getRangeAt(0)).toBe(range);expect(getSelection()!.toString()).toBe('选中任何一段文字');
+  $('#document').dispatchEvent(new Event('touchend'));
+  await new Promise(r=>setTimeout(r,80));
+  await new Promise<void>(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>r())));
+  // Delayed removeAllRanges dismisses iOS callout; DOM text nodes untouched; pending 批注 remains.
+  expect(getSelection()!.rangeCount).toBe(0);expect(node.isConnected).toBe(true);expect(document.querySelector('.temp-selection')).toBeNull();
+  expect($('#selection-action').hidden).toBe(false);
+  expect(parseFloat($('#selection-action').style.top)).toBe(64); // preferAbove: 120-48-8
+  $('#selection-action').click();expect($('#quote').textContent).toBe('选中任何一段文字');expect($('#comment-popover').hidden).toBe(false);
  });
  it('opens the captured quote while native selection remains adjustable',async()=>{
   await select('选中任何一段文字');expect($('#selection-action').hidden).toBe(false);
