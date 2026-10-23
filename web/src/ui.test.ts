@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import {clampPosition} from './viewport';
 import {beforeEach,afterEach,describe,it,expect,vi} from 'vitest';
 const $=(s:string)=>document.querySelector(s) as HTMLElement;
 const input=(s:string,value:string)=>{($(s) as HTMLInputElement).value=value;$(s).dispatchEvent(new Event('input',{bubbles:true}));};
@@ -6,8 +7,30 @@ async function select(text:string){const walk=document.createTreeWalker($('#docu
 async function add(){await select('选中任何一段文字');$('#selection-action').click();input('#comment-input','测试批注');$('#save-comment').click();}
 function settings(){ $('#settings').click();$('#add-agent').click();input('.agent-name','本地测试');input('.agent-url','http://localhost:8787/feedback');input('.agent-key','session-only-token');$('#settings-form').dispatchEvent(new Event('submit',{cancelable:true,bubbles:true}));}
 beforeEach(async()=>{vi.resetModules();sessionStorage.clear();vi.spyOn(window,'close').mockImplementation(()=>{});history.replaceState(null,'','/');delete (window as any).LOOP_DEMO;delete (window as any).LOOP_HOSTED;localStorage.clear();document.body.innerHTML='<div id="app"></div>';Range.prototype.getBoundingClientRect=()=>({x:0,y:0,left:10,right:100,top:10,bottom:30,width:90,height:20,toJSON(){}});HTMLDialogElement.prototype.showModal=function(){this.open=true;};HTMLDialogElement.prototype.close=function(){this.open=false;};await import('./main');});
-afterEach(()=>{vi.restoreAllMocks();getSelection()?.removeAllRanges();});
+afterEach(()=>{vi.unstubAllGlobals();vi.restoreAllMocks();getSelection()?.removeAllRanges();});
 describe('UI behavior',()=>{
+ it('clamps layout coordinates into the visual viewport without doubling offsets',()=>{
+  const box={width:390,height:280,left:40,top:180};
+  expect(clampPosition({left:900,bottom:900},{width:340,height:320},box)).toEqual({left:78,top:192});
+  expect(clampPosition({left:60,bottom:200},{width:100,height:48},box)).toEqual({left:60,top:208});
+  expect(clampPosition({left:-20,bottom:-20},{width:100,height:48},box)).toEqual({left:52,top:192});
+ });
+ it('suppresses the document context menu and captures touch selection promptly',async()=>{
+  const menu=new Event('contextmenu',{cancelable:true});$('#document').dispatchEvent(menu);expect(menu.defaultPrevented).toBe(true);
+  await select('选中任何一段文字');$('#selection-action').hidden=true;$('#document').dispatchEvent(new Event('touchend'));expect($('#selection-action').hidden).toBe(false);
+ });
+ it('repositions and scrolls the focused comment when the visual viewport changes',async()=>{
+  const vv=Object.assign(new EventTarget(),{width:390,height:280,offsetLeft:40,offsetTop:180});
+  vi.stubGlobal('visualViewport',vv);
+  vi.resetModules();document.body.innerHTML='<div id="app"></div>';await import('./main');
+  const scroll=vi.fn();$('#comment-popover').scrollIntoView=scroll;
+  await select('选中任何一段文字');$('#selection-action').click();
+  expect(document.activeElement).toBe($('#comment-input'));
+  await new Promise(r=>requestAnimationFrame(r));expect(scroll).toHaveBeenCalledWith({block:'nearest',inline:'nearest'});
+  expect($('#comment-popover').style.left).toBe('52px');expect($('#comment-popover').style.top).toBe('192px');expect($('#comment-popover').style.maxHeight).toBe('256px');
+  vv.offsetTop=230;vv.dispatchEvent(new Event('resize'));expect($('#comment-popover').style.top).toBe('242px');
+  vv.offsetLeft=70;vv.dispatchEvent(new Event('scroll'));expect($('#comment-popover').style.left).toBe('82px');
+ });
  it('selects, creates, edits and deletes inline annotation',async()=>{await add();expect(document.querySelector('mark')?.textContent).toBe('选中任何一段文字');$('[data-marker]').click();input('#comment-input','修改后');$('#save-comment').click();expect(JSON.parse(localStorage.getItem('loop.v1')!).annotations[0].comment).toBe('修改后');$('[data-marker]').click();$('#delete-comment').click();expect(document.querySelector('mark')).toBeNull();});
  it('rejects overlap; supports Alt+Enter; pending draft blocks submission',async()=>{await add();await select('任何一段');$('#selection-action').click();expect($('#status').textContent).toContain('已包含批注');await select('一个更轻盈的工作流');document.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',altKey:true}));expect($('#comment-popover').hidden).toBe(false);$('#submit').click();expect($('#status').textContent).toContain('先保存或关闭');});
  it('preserves unsaved agent key across add/remove and never persists it',()=>{$('#settings').click();$('#add-agent').click();input('.agent-name','本地测试');input('.agent-url','http://localhost:8787/feedback');input('.agent-key','secret123');$('#add-agent').click();expect((document.querySelector('.agent-key') as HTMLInputElement).value).toBe('secret123');document.querySelectorAll<HTMLElement>('.remove')[1].click();$('#settings-form').dispatchEvent(new Event('submit',{cancelable:true}));expect(localStorage.getItem('loop.v1')).not.toContain('secret123');expect(JSON.parse(localStorage.getItem('loop.v1')!).agents).toHaveLength(1);});
