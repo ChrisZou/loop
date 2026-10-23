@@ -16,27 +16,30 @@ describe('UI behavior',()=>{
   expect(clampPosition({left:60,bottom:200},{width:100,height:48},box)).toEqual({left:60,top:208});
   expect(clampPosition({left:-20,bottom:-20},{width:100,height:48},box)).toEqual({left:52,top:192});
  });
- it('preferAbove places above the selection when there is room, else falls back below',()=>{
-  const roomy={width:390,height:600,left:0,top:0};
-  expect(clampPosition({left:60,bottom:200,top:180},{width:100,height:48},roomy,{preferAbove:true})).toEqual({left:60,top:124});
-  const tight={width:390,height:280,left:40,top:180};
-  expect(clampPosition({left:60,bottom:200,top:190},{width:100,height:48},tight,{preferAbove:true})).toEqual({left:60,top:208});
- });
- it('suppresses context menu; after touch settles clears native range (no temp mark) and keeps ＋批注 above',async()=>{
+ it('suppresses the context menu and captures touch selection without clearing or replacing its range',async()=>{
   const menu=new Event('contextmenu',{cancelable:true});$('#document').dispatchEvent(menu);expect(menu.defaultPrevented).toBe(true);
-  // Room above the selection so preferAbove can place ＋批注 over the range (iOS callout is usually below).
-  Range.prototype.getBoundingClientRect=()=>({x:40,y:120,left:40,right:200,top:120,bottom:150,width:160,height:30,toJSON(){}});
   $('#document').dispatchEvent(new Event('touchstart'));await select('选中任何一段文字');const range=getSelection()!.getRangeAt(0),node=range.startContainer;
-  // During touchstart→touchend, never clear; handles stay adjustable. Button waits until settle.
-  expect(getSelection()!.getRangeAt(0)).toBe(range);expect(getSelection()!.toString()).toBe('选中任何一段文字');
-  $('#document').dispatchEvent(new Event('touchend'));
-  await new Promise(r=>setTimeout(r,80));
-  await new Promise<void>(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>r())));
-  // Delayed removeAllRanges dismisses iOS callout; DOM text nodes untouched; pending 批注 remains.
-  expect(getSelection()!.rangeCount).toBe(0);expect(node.isConnected).toBe(true);expect(document.querySelector('.temp-selection')).toBeNull();
+  expect($('#selection-action').hidden).toBe(false);expect($('#selection-action').classList.contains('top-pin')).toBe(true);
+  expect($('#selection-action').style.top).toBe('12px');
+  $('#document').dispatchEvent(new Event('touchend'));await new Promise(r=>requestAnimationFrame(r));
+  expect(getSelection()!.getRangeAt(0)).toBe(range);expect(node.isConnected).toBe(true);expect(getSelection()!.toString()).toBe('选中任何一段文字');expect(document.querySelector('.temp-selection')).toBeNull();
+  expect(getSelection()!.rangeCount).toBe(1);
+ });
+ it('pins ＋批注 and the comment popover to the visual viewport top',async()=>{
+  const vv=Object.assign(new EventTarget(),{width:390,height:700,offsetLeft:0,offsetTop:40});
+  vi.stubGlobal('visualViewport',vv);
+  vi.resetModules();document.body.innerHTML='<div id="app"></div>';await import('./main');
+  await select('选中任何一段文字');
   expect($('#selection-action').hidden).toBe(false);
-  expect(parseFloat($('#selection-action').style.top)).toBe(64); // preferAbove: 120-48-8
-  $('#selection-action').click();expect($('#quote').textContent).toBe('选中任何一段文字');expect($('#comment-popover').hidden).toBe(false);
+  expect($('#selection-action').classList.contains('top-pin')).toBe(true);
+  expect($('#selection-action').style.top).toBe('52px');
+  // Horizontally centered: (390 - ~100) / 2 ≈ left 145 with default size fallback 100
+  expect(parseFloat($('#selection-action').style.left)).toBeGreaterThanOrEqual(12);
+  $('#selection-action').click();
+  expect($('#comment-popover').hidden).toBe(false);
+  expect($('#comment-popover').classList.contains('top-pin')).toBe(true);
+  expect($('#comment-popover').style.top).toBe('52px');
+  expect($('#comment-popover').style.maxWidth).toBe('366px');
  });
  it('opens the captured quote while native selection remains adjustable',async()=>{
   await select('选中任何一段文字');expect($('#selection-action').hidden).toBe(false);
@@ -68,9 +71,16 @@ describe('UI behavior',()=>{
   await select('选中任何一段文字');$('#selection-action').click();
   expect(document.activeElement).toBe($('#comment-input'));
   await new Promise(r=>requestAnimationFrame(r));expect(scroll).toHaveBeenCalledWith({block:'nearest',inline:'nearest'});
-  expect($('#comment-popover').style.left).toBe('52px');expect($('#comment-popover').style.top).toBe('192px');expect($('#comment-popover').style.maxHeight).toBe('256px');
-  vv.offsetTop=230;vv.dispatchEvent(new Event('resize'));expect($('#comment-popover').style.top).toBe('242px');
-  vv.offsetLeft=70;vv.dispatchEvent(new Event('scroll'));expect($('#comment-popover').style.left).toBe('82px');
+  // Top-pinned: centered in visual viewport, top = offsetTop + safe-area pad
+  expect($('#comment-popover').style.top).toBe('192px');
+  expect($('#comment-popover').style.maxHeight).toBe('256px');
+  expect($('#comment-popover').classList.contains('top-pin')).toBe(true);
+  // width clamped to 340 → left = 40 + (390-340)/2 = 65
+  expect($('#comment-popover').style.left).toBe('65px');
+  vv.offsetTop=230;vv.dispatchEvent(new Event('resize'));
+  expect($('#comment-popover').style.top).toBe('242px');
+  vv.offsetLeft=70;vv.dispatchEvent(new Event('scroll'));
+  expect($('#comment-popover').style.left).toBe('95px');
  });
  it('selects, creates, edits and deletes inline annotation',async()=>{await add();expect(document.querySelector('mark')?.textContent).toBe('选中任何一段文字');$('[data-marker]').click();input('#comment-input','修改后');$('#save-comment').click();expect(JSON.parse(localStorage.getItem('loop.v1')!).annotations[0].comment).toBe('修改后');$('[data-marker]').click();$('#delete-comment').click();expect(document.querySelector('mark')).toBeNull();});
  it('rejects overlap; supports Alt+Enter; pending draft blocks submission',async()=>{await add();await select('任何一段');$('#selection-action').click();expect($('#status').textContent).toContain('已包含批注');await select('一个更轻盈的工作流');document.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',altKey:true}));expect($('#comment-popover').hidden).toBe(false);$('#submit').click();expect($('#status').textContent).toContain('先保存或关闭');});

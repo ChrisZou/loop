@@ -18,3 +18,5 @@ header{height:64px;background:#fafaf7;padding:0 4%}.brand{font-size:21px;gap:7px
 
 #document{-webkit-touch-callout:none;-webkit-user-select:text;user-select:text}
 
+/* Pin ＋批注 / comment popover to visualViewport top; safe-area bumps when notch > 4px. */
+.floating.top-pin,#comment-popover.top-pin{z-index:40;margin-top:max(0px,calc(env(safe-area-inset-top,0px) + 8px - 12px))}

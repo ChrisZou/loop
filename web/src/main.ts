@@ -1,4 +1,3 @@
-import {clampPosition} from './viewport';
 import './style.css';
 import {renderMarkdown,canonicalText,rangeOffsets,paintAnnotations,overlaps,validateWebhook,makePayload, type Annotation,type Agent} from './core';
 const sample=`# 让每一轮反馈，都更进一步
@@ -89,49 +88,33 @@ const doc=$('#document'), action=$<HTMLButtonElement>('#selection-action'), pop=
 function announce(text:string,error=false){$('#status').textContent=text;$('#status').classList.toggle('error',error);}
 function draw(){drawReviewContext();doc.innerHTML=renderMarkdown(state.document);paintAnnotations(doc,state.annotations);doc.querySelectorAll('a').forEach(a=>{a.target='_blank';a.rel='noopener noreferrer';});$('#count').textContent=`${state.annotations.length} 条批注`;}
 function drawAgents(){if(linkedMode)state.selected=sessionAgent.id;const agents=availableAgents();const select=$<HTMLSelectElement>('#agent-select');select.replaceChildren();if(!agents.length) select.add(new Option('选择 Agent',''));agents.forEach(a=>select.add(new Option(a.id===sessionAgent.id?'当前会话':a.name,a.id))); if(!agents.some(a=>a.id===state.selected))state.selected=agents[0]?.id||'';select.value=state.selected;}
-function hidePendingSelection(){action.hidden=true;if(pop.hidden){pending=null;pendingRect=null;keptPendingAfterCalloutClear=false;}}
+function hidePendingSelection(){action.hidden=true;action.classList.remove('top-pin');if(pop.hidden)pending=null;}
 function discardCommentDraft(){drafts.comment=null;saveDrafts();closePopover();}
-function closePopover(){$<HTMLTextAreaElement>('#comment-input').value='';pop.hidden=true;editingId=null;pending=null;pendingRect=null;keptPendingAfterCalloutClear=false;action.hidden=true;}
-let popAnchor={left:12,bottom:102}, pendingRect:{left:number;top:number;bottom:number}|null=null;
-let selectingByTouch=false, dismissCalloutAfterCapture=false, keptPendingAfterCalloutClear=false;
-function place(el:HTMLElement,rect:{left:number;bottom:number;top?:number}){const vv=window.visualViewport, box={width:vv?.width??innerWidth,height:vv?.height??innerHeight,left:vv?.offsetLeft??0,top:vv?.offsetTop??0};if(el===pop){popAnchor=rect;el.style.maxWidth=`${Math.max(0,box.width-24)}px`;el.style.maxHeight=`${Math.max(0,box.height-24)}px`;el.style.overflow='auto';}const size={width:el.offsetWidth||(el===pop?340:100),height:el.offsetHeight||(el===pop?320:48)};const pos=clampPosition(rect,size,box,el===action?{preferAbove:true}:undefined);el.style.left=`${pos.left}px`;el.style.top=`${pos.top}px`;}
-function repositionPopover(){if(!pop.hidden)place(pop,popAnchor);}
-function focusComment(){$<HTMLTextAreaElement>('#comment-input').focus();requestAnimationFrame(()=>{if(pop.hidden)return;pop.scrollIntoView?.({block:'nearest',inline:'nearest'});repositionPopover();});}
+function closePopover(){$<HTMLTextAreaElement>('#comment-input').value='';pop.hidden=true;pop.classList.remove('top-pin');editingId=null;pending=null;action.hidden=true;action.classList.remove('top-pin');}
+// Pin ＋批注 / comment popover to the visual viewport top so iOS Copy/Look Up near the selection cannot cover them.
+function pinToTop(el:HTMLElement){
+ const vv=window.visualViewport, box={width:vv?.width??innerWidth,height:vv?.height??innerHeight,left:vv?.offsetLeft??0,top:vv?.offsetTop??0};
+ el.classList.add('top-pin');
+ if(el===pop){el.style.maxWidth=`${Math.max(0,box.width-24)}px`;el.style.maxHeight=`${Math.max(0,box.height-24)}px`;el.style.overflow='auto';}
+ const size={width:el.offsetWidth||(el===pop?340:100),height:el.offsetHeight||(el===pop?320:48)};
+ const width=Math.min(size.width,Math.max(0,box.width-24));
+ el.style.left=`${box.left+Math.max(12,(box.width-width)/2)}px`;
+ // Base pad 12px; CSS .top-pin adds extra when safe-area-inset-top + 8 > 12.
+ el.style.top=`${box.top+12}px`;
+}
+function repositionPinned(){if(!action.hidden)pinToTop(action);if(!pop.hidden)pinToTop(pop);}
+function focusComment(){$<HTMLTextAreaElement>('#comment-input').focus();requestAnimationFrame(()=>{if(pop.hidden)return;pop.scrollIntoView?.({block:'nearest',inline:'nearest'});repositionPinned();});}
 function captureSelection(){
- // touchstart→touchend: never clear the live range; handles must stay adjustable.
- if(!pop.hidden||selectingByTouch)return;const selection=window.getSelection();
- if(!selection?.rangeCount || selection.isCollapsed){
-  // After we cleared the native range to dismiss iOS callout, keep ＋批注 from pending offsets/quote.
-  // A real user collapse (no keptPending flag) still dismisses the floating button.
-  if(keptPendingAfterCalloutClear && pending){
-   if(pendingRect)place(action,pendingRect);
-   action.hidden=false;return;
-  }
-  hidePendingSelection();return;
- }
+ if(!pop.hidden)return;const selection=window.getSelection();
+ if(!selection?.rangeCount || selection.isCollapsed){hidePendingSelection();return;}
  const r=selection.getRangeAt(0),anchor=rangeOffsets(doc,r);if(!anchor){hidePendingSelection();return;}
- const rect=r.getBoundingClientRect();
- keptPendingAfterCalloutClear=false;
- pending=anchor;pendingRect={left:rect.left,top:rect.top,bottom:rect.bottom};
- place(action,pendingRect);action.hidden=false;
- if(dismissCalloutAfterCapture){
-  const forAnchor=anchor;
-  // After touch settles: clear native selection only (no DOM text wrap) to dismiss iOS Copy/Look Up callout.
-  // Do not use mark.temp-selection — wrapping text nodes previously broke Safari selection handles.
-  requestAnimationFrame(()=>{requestAnimationFrame(()=>{
-   if(selectingByTouch||pending!==forAnchor)return;
-   keptPendingAfterCalloutClear=true;
-   window.getSelection()?.removeAllRanges();
-   if(pending===forAnchor && pendingRect){place(action,pendingRect);action.hidden=false;}
-  });});
- }
+ // Keep the live range and its text nodes intact so Safari selection handles remain usable.
+ pending=anchor;pinToTop(action);action.hidden=false;
 }
 document.addEventListener('selectionchange',captureSelection);
 doc.addEventListener('contextmenu',e=>e.preventDefault());
-doc.addEventListener('touchstart',()=>{selectingByTouch=true;dismissCalloutAfterCapture=true;},{passive:true});
-doc.addEventListener('touchend',()=>{selectingByTouch=false;/* let Safari finalize selection before capture + delayed clear */setTimeout(captureSelection,50);});
-doc.addEventListener('touchcancel',()=>{selectingByTouch=false;dismissCalloutAfterCapture=false;hidePendingSelection();});
-document.addEventListener('pointerdown',e=>{if((e as PointerEvent).pointerType!=='touch')dismissCalloutAfterCapture=false;},true);
+doc.addEventListener('touchend',captureSelection);
+doc.addEventListener('touchcancel',hidePendingSelection);
 function dismissOnBlank(e:Event){
  const target=e.target as Element;
  if(!doc.contains(target) || target.closest('[data-annotation],#selection-action,#comment-popover,a,button,input,textarea,select,label,summary,[contenteditable],[role="button"]'))return;
@@ -140,10 +123,10 @@ function dismissOnBlank(e:Event){
 doc.addEventListener('pointerdown',dismissOnBlank);
 doc.addEventListener('click',dismissOnBlank);
 action.addEventListener('pointerdown',e=>e.preventDefault());
-function openNew(){if(!pending)return;if(state.annotations.some(a=>overlaps(a,pending!))){announce('这段文字已包含批注。请点击已有编号编辑，或选择不重叠的文字。',true);return;}editingId=null;$('#comment-title').textContent='添加批注';$('#quote').textContent=pending.quote;$<HTMLTextAreaElement>('#comment-input').value='';$('#delete-comment').hidden=true;pop.hidden=false;place(pop,action.getBoundingClientRect());action.hidden=true;focusComment();}
+function openNew(){if(!pending)return;if(state.annotations.some(a=>overlaps(a,pending!))){announce('这段文字已包含批注。请点击已有编号编辑，或选择不重叠的文字。',true);return;}editingId=null;$('#comment-title').textContent='添加批注';$('#quote').textContent=pending.quote;$<HTMLTextAreaElement>('#comment-input').value='';$('#delete-comment').hidden=true;pop.hidden=false;action.hidden=true;action.classList.remove('top-pin');pinToTop(pop);focusComment();}
 action.onclick=openNew;
 document.addEventListener('keydown',e=>{if(e.altKey&&e.key==='Enter'){e.preventDefault();if(pop.hidden){captureSelection();openNew();}else saveComment();}if(e.key==='Escape'){discardCommentDraft();}});
-function openExisting(id:string,target:HTMLElement,focus=false){const a=state.annotations.find(a=>a.id===id);if(!a)return;editingId=id;pending=null;$('#comment-title').textContent='编辑批注';$('#quote').textContent=a.quote;$<HTMLTextAreaElement>('#comment-input').value=a.comment;$('#delete-comment').hidden=false;pop.hidden=false;action.hidden=true;place(pop,target.getBoundingClientRect());if(focus)focusComment();}
+function openExisting(id:string,target:HTMLElement,focus=false){const a=state.annotations.find(a=>a.id===id);if(!a)return;editingId=id;pending=null;$('#comment-title').textContent='编辑批注';$('#quote').textContent=a.quote;$<HTMLTextAreaElement>('#comment-input').value=a.comment;$('#delete-comment').hidden=false;pop.hidden=false;action.hidden=true;action.classList.remove('top-pin');pinToTop(pop);if(focus)focusComment();}
 doc.addEventListener('click',e=>{const t=(e.target as HTMLElement).closest<HTMLElement>('[data-annotation]');if(t)openExisting(t.dataset.annotation!,t,true);});
 doc.addEventListener('pointerover',e=>{if(e.pointerType==='touch'||!pop.hidden)return;const t=(e.target as HTMLElement).closest<HTMLElement>('[data-marker]');if(t)openExisting(t.dataset.annotation!,t);});
 $('#close-comment').onclick=()=>{discardCommentDraft();};
@@ -171,8 +154,8 @@ $('#submit').onclick=async()=>{if(submitting)return;if(hosted&&(!state.review||(
   let stage='建立提交会话';
   try {const isSession=sameOriginMode && agent.id===sessionAgent.id && new URL(agent.webhook).origin===location.origin;const sessionHeaders:Record<string,string>={};if(isSession){const sessionResponse=await fetch('/api/session',{...sessionTransport,method:'POST',signal:controller.signal});if(!sessionResponse.ok)throw new Error(`提交会话不可用（HTTP ${sessionResponse.status}），可能已过期或达到限额`);const sessionData=await sessionResponse.json();if(typeof sessionData.session!=='string'||!sessionData.session)throw new Error('提交会话响应无效');sessionHeaders['X-Loop-Session']=sessionData.session;}stage='发送反馈';const response=await fetch(isSession?'/api/feedback':agent.webhook,{method:'POST',headers:{'Content-Type':'application/json',...sessionHeaders,...(!isSession&&key?{Authorization:`Bearer ${key}`}:{})},body:JSON.stringify(payload),signal:controller.signal,...(isSession?sessionTransport:{redirect:'error' as const,credentials:'omit' as const,referrerPolicy:'no-referrer' as const})});if(!response.ok)throw new Error(`接收端返回 HTTP ${response.status}`);if(isSession){stage='核对提交回执';const receipt=await response.json();if(receipt.accepted!==true||receipt.submissionId!==payload.submissionId)throw new Error('提交回执无效，状态未确认');finishSubmission(payload.reviewId??null,receipt.submissionId);}else finishSubmission(payload.reviewId??null,payload.submissionId);}catch(error){const timedOut=controller.signal.aborted;announce(timedOut?'提交超时，接收状态未知。内容已保留，请确认后重试。':`提交未确认（${stage}）：${error instanceof Error?error.message:'网络错误'}。${saveFailed?'内容仍在当前页面，请勿关闭或刷新。':'内容已保留在此设备，可重试。'}`,true);}finally{clearTimeout(timer);submitting=false;button.disabled=false;button.innerHTML='提交 <span>↗</span>';}
 };
-window.addEventListener('resize',()=>{hidePendingSelection();repositionPopover();});window.addEventListener('scroll',hidePendingSelection,true);
-window.visualViewport?.addEventListener('resize',repositionPopover);window.visualViewport?.addEventListener('scroll',repositionPopover);
+window.addEventListener('resize',()=>{hidePendingSelection();repositionPinned();});window.addEventListener('scroll',hidePendingSelection,true);
+window.visualViewport?.addEventListener('resize',repositionPinned);window.visualViewport?.addEventListener('scroll',repositionPinned);
 $('#restore-markdown').onclick=()=>editor(true);
 
 $('#discard-drafts').onclick=()=>{if(!confirm('放弃尚未应用的原文草稿？已保存的原文与批注会保留。'))return;drafts={markdown:null,comment:null};saveDrafts();closePopover();editor(false);};
