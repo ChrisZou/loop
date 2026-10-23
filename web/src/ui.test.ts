@@ -3,7 +3,7 @@ import {clampPosition} from './viewport';
 import {beforeEach,afterEach,describe,it,expect,vi} from 'vitest';
 const $=(s:string)=>document.querySelector(s) as HTMLElement;
 const input=(s:string,value:string)=>{($(s) as HTMLInputElement).value=value;$(s).dispatchEvent(new Event('input',{bubbles:true}));};
-async function select(text:string){const walk=document.createTreeWalker($('#document'),NodeFilter.SHOW_TEXT);let n;while(n=walk.nextNode()){const i=n.textContent!.indexOf(text);if(i>=0){const r=document.createRange();r.setStart(n,i);r.setEnd(n,i+text.length);getSelection()!.removeAllRanges();getSelection()!.addRange(r);document.dispatchEvent(new Event('selectionchange'));await new Promise(r=>setTimeout(r,35));return;}}throw Error('missing');}
+async function select(text:string){const walk=document.createTreeWalker($('#document'),NodeFilter.SHOW_TEXT);let n;while(n=walk.nextNode()){const i=n.textContent!.indexOf(text);if(i>=0){const r=document.createRange();r.setStart(n,i);r.setEnd(n,i+text.length);getSelection()!.removeAllRanges();getSelection()!.addRange(r);document.dispatchEvent(new Event('selectionchange'));await new Promise(r=>setTimeout(r,60));return;}}throw Error('missing');}
 async function add(){await select('选中任何一段文字');$('#selection-action').click();input('#comment-input','测试批注');$('#save-comment').click();}
 function settings(){ $('#settings').click();$('#add-agent').click();input('.agent-name','本地测试');input('.agent-url','http://localhost:8787/feedback');input('.agent-key','session-only-token');$('#settings-form').dispatchEvent(new Event('submit',{cancelable:true,bubbles:true}));}
 beforeEach(async()=>{vi.resetModules();sessionStorage.clear();vi.spyOn(window,'close').mockImplementation(()=>{});history.replaceState(null,'','/');delete (window as any).LOOP_DEMO;delete (window as any).LOOP_HOSTED;localStorage.clear();document.body.innerHTML='<div id="app"></div>';Range.prototype.getBoundingClientRect=()=>({x:0,y:0,left:10,right:100,top:10,bottom:30,width:90,height:20,toJSON(){}});HTMLDialogElement.prototype.showModal=function(){this.open=true;};HTMLDialogElement.prototype.close=function(){this.open=false;};await import('./main');});
@@ -17,7 +17,20 @@ describe('UI behavior',()=>{
  });
  it('suppresses the document context menu and captures touch selection promptly',async()=>{
   const menu=new Event('contextmenu',{cancelable:true});$('#document').dispatchEvent(menu);expect(menu.defaultPrevented).toBe(true);
-  await select('选中任何一段文字');$('#selection-action').hidden=true;$('#document').dispatchEvent(new Event('touchend'));expect($('#selection-action').hidden).toBe(false);
+  $('#document').dispatchEvent(new Event('touchstart'));await select('选中任何一段文字');expect($('#selection-action').hidden).toBe(true);$('#document').dispatchEvent(new Event('touchend'));expect($('#selection-action').hidden).toBe(false);await new Promise(r=>requestAnimationFrame(r));expect(getSelection()!.rangeCount).toBe(0);
+ });
+ it('keeps a temporary selection after clearing native ranges and opens its captured quote',async()=>{
+  await select('选中任何一段文字');expect(getSelection()!.rangeCount).toBe(0);
+  document.dispatchEvent(new Event('selectionchange'));await new Promise(r=>setTimeout(r,30));
+  expect($('#selection-action').hidden).toBe(false);expect($('mark.temp-selection').textContent).toBe('选中任何一段文字');expect(document.querySelector('[data-annotation]')).toBeNull();
+  $('#selection-action').click();expect($('#quote').textContent).toBe('选中任何一段文字');$('#close-comment').click();expect(document.querySelector('.temp-selection')).toBeNull();expect($('#selection-action').hidden).toBe(true);
+ });
+ it('replaces temporary selections and clears them on dismissal and viewport changes',async()=>{
+  await select('选中任何一段文字');await select('一个更轻盈的工作流');expect($('mark.temp-selection').textContent).toBe('一个更轻盈的工作流');
+  window.dispatchEvent(new Event('scroll'));expect(document.querySelector('.temp-selection')).toBeNull();expect($('#selection-action').hidden).toBe(true);
+  await select('选中任何一段文字');window.dispatchEvent(new Event('resize'));expect(document.querySelector('.temp-selection')).toBeNull();
+  await select('选中任何一段文字');document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));expect(document.querySelector('.temp-selection')).toBeNull();
+  await select('选中任何一段文字');$('#edit-tab').click();expect(document.querySelector('.temp-selection')).toBeNull();
  });
  it('repositions and scrolls the focused comment when the visual viewport changes',async()=>{
   const vv=Object.assign(new EventTarget(),{width:390,height:280,offsetLeft:40,offsetTop:180});
