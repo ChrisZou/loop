@@ -141,7 +141,7 @@ enum CommentRanges {
     }
 
     /// The text of a range without the markdown syntax the editor hides. Table cells on one line stay
-    /// apart as `a | b`; rows keep their line breaks.
+    /// apart as `a | b`; rows keep their line breaks. An image reads as `[图片：alt]`.
     static func visibleText(of range: NSRange, in text: String, hidden: IndexSet) -> String {
         let source = text as NSString
         let visible = IndexSet(integersIn: range.location..<NSMaxRange(range)).subtracting(hidden)
@@ -153,7 +153,14 @@ enum CommentRanges {
                source.character(at: previous.upperBound - 1) != 0x0A, source.character(at: run.lowerBound) != 0x0A {
                 result += " | "
             }
-            result += source.substring(with: NSRange(location: run.lowerBound, length: run.count))
+            var piece = source.substring(with: NSRange(location: run.lowerBound, length: run.count))
+            // An image shows only as its `!`, the last visible character before its hidden markdown.
+            let last = run.upperBound - 1
+            if source.character(at: last) == 0x21, hidden.contains(run.upperBound),
+               let image = MarkdownImage.at(last, in: source) {
+                piece = String(piece.dropLast()) + image.label
+            }
+            result += piece
             previous = run
         }
         return result

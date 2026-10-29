@@ -215,6 +215,42 @@ enum SelfTest {
         check(board.string(forType: .string) == "W0 | 10/21", "copying cells copies their markdown")
         board.releaseGlobally()
 
+        do {
+            // Images: the `!` becomes the attachment character and the rest is hidden; quotes name the image.
+            let imageFolder = FileManager.default.temporaryDirectory.appendingPathComponent("loop-images-\(UUID().uuidString)")
+            try? FileManager.default.createDirectory(at: imageFolder.appendingPathComponent("图 片"), withIntermediateDirectories: true)
+            let pixel = NSImage(size: NSSize(width: 1600, height: 400), flipped: false) { rect in NSColor.systemBlue.setFill(); rect.fill(); return true }
+            if let tiff = pixel.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                try? png.write(to: imageFolder.appendingPathComponent("图 片/wide.png"))
+            }
+            let pictured = "看图 ![架构](<图 片/wide.png>) 和 ![](图%20片/wide.png \"t\")\n\n![丢失](none.png)\n\n`![代码](x.png)`\n"
+            let picturedSource = pictured as NSString
+            let picturedStorage = NSTextStorage(string: pictured)
+            let picturedHidden = MarkdownStyler.apply(to: picturedStorage, comments: [], folder: imageFolder)
+            let images = MarkdownImage.all(in: pictured)
+            check(images.map(\.target) == ["图 片/wide.png", "图%20片/wide.png", "none.png", "x.png"], "image targets, with <> and titles")
+            let first = images[0].range
+            check((picturedStorage.string as NSString).character(at: first.location) == 0xFFFC
+                  && picturedStorage.length == picturedSource.length
+                  && picturedHidden.contains(integersIn: first.location + 1..<NSMaxRange(first)) && !picturedHidden.contains(first.location),
+                  "an image keeps every index, shows one attachment and hides its markdown")
+            let codeImage = picturedSource.range(of: "![代码]")
+            check(picturedStorage.attribute(.attachment, at: codeImage.location, effectiveRange: nil) == nil, "an image in code stays code")
+            let cells = images.prefix(3).map { (picturedStorage.attribute(.attachment, at: $0.range.location, effectiveRange: nil) as? NSTextAttachment)?.attachmentCell as? PlanImageCell }
+            check(cells.map { $0?.url } == [imageFolder.appendingPathComponent("图 片/wide.png"), imageFolder.appendingPathComponent("图 片/wide.png"),
+                                           imageFolder.appendingPathComponent("none.png")].map(\.standardizedFileURL),
+                  "image paths resolve against the plan's folder, undoing %20")
+            if case .loaded(let image) = PlanImages.state(of: cells[0]?.url) { check(image.size.width == 1600, "a local image loads") }
+            else { check(false, "a local image loads") }
+            if case .missing = PlanImages.state(of: cells[2]?.url) {} else { check(false, "a missing image is reported") }
+            check(cells[0]?.cellSize() == NSSize(width: MarkdownStyler.textWidth, height: (400 * MarkdownStyler.textWidth / 1600).rounded()),
+                  "a wide image shrinks to the text column, keeping its shape")
+            let sentence = NSRange(location: 0, length: NSMaxRange(images[1].range))
+            check(CommentRanges.visibleText(of: sentence, in: pictured, hidden: picturedHidden) == "看图 [图片：架构] 和 [图片：图%20片/wide.png]",
+                  "a quote names each image")
+            try? FileManager.default.removeItem(at: imageFolder)
+        }
+
         // Task items: the reviewer's ticks are feedback; the plan itself never changes.
         let todo = "- [ ] 定资金止损线 N\n- [x] 通知厂商\n- [ ] **我来做** 加检查\n后记\n"
         let todoSource = todo as NSString

@@ -579,7 +579,33 @@ struct DocumentEditor: NSViewRepresentable {
         private var previewCard: CardView? { container?.previewCard }
         private var editorCard: CardView? { container?.editorCard }
 
-        init(_ store: SessionStore) { self.store = store }
+        private var imageObserver: NSObjectProtocol?
+
+        init(_ store: SessionStore) {
+            self.store = store
+            super.init()
+            imageObserver = NotificationCenter.default.addObserver(forName: .loopImageLoaded, object: nil, queue: .main) { [weak self] _ in
+                self?.imageLoaded()
+            }
+        }
+
+        deinit { imageObserver.map(NotificationCenter.default.removeObserver) }
+
+        /// A web image arrived: its placeholder takes the image's size, which moves everything after it.
+        private func imageLoaded() {
+            guard let storage = container?.textView.textStorage, storage.length > 0 else { return }
+            storage.beginEditing()
+            storage.edited(.editedAttributes, range: NSRange(location: 0, length: storage.length), changeInLength: 0)
+            storage.endEditing()
+            layoutMarkers()
+        }
+
+        /// Double-clicking an image opens it full size, in Preview or the browser.
+        func textView(_ textView: NSTextView, doubleClickedOn cell: NSTextAttachmentCellProtocol, in cellFrame: NSRect, at charIndex: Int) {
+            guard let url = (cell as? PlanImageCell)?.url, url.scheme != "data" else { return }
+            if url.isFileURL, !FileManager.default.fileExists(atPath: url.path) { return }
+            NSWorkspace.shared.open(url)
+        }
 
         func layoutMarkers() {
             guard let container, let storage = container.textView.textStorage else { return }
@@ -743,7 +769,8 @@ struct DocumentEditor: NSViewRepresentable {
                 // Before the first layout the container has no width yet; a full sheet's is close.
                 let width = view.textContainer.map(\.size.width).flatMap { $0 > 0 ? $0 : nil } ?? MarkdownStyler.textWidth
                 fittedWidth = width
-                MarkdownStyler.apply(to: storage, source: store.text, comments: store.comments, width: width)
+                MarkdownStyler.apply(to: storage, source: store.text, comments: store.comments, width: width,
+                                     folder: store.review.source.deletingLastPathComponent())
                 view.selectedRanges = selections
             }
             // Inactive first, so an active range paints over the ones it overlaps.

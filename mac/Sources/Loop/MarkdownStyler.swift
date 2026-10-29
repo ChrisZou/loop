@@ -48,9 +48,10 @@ enum MarkdownStyler {
     /// Comment highlights are drawn by the text view; here comments only reserve room for their markers.
     /// Tables also swap a few characters for paragraph breaks (see `MarkdownTable`), so pass the plan's markdown as
     /// `source` once the storage has been styled before. Table columns are shared out for a text column `width` wide.
+    /// Image paths are relative to `folder`, the plan's folder.
     @discardableResult
     static func apply(to storage: NSTextStorage, source: String? = nil, comments: [Comment],
-                      width: CGFloat = textWidth) -> IndexSet {
+                      width: CGFloat = textWidth, folder: URL? = nil) -> IndexSet {
         let text = source ?? storage.string
         let full = NSRange(location: 0, length: storage.length)
         var hidden = IndexSet()
@@ -178,6 +179,22 @@ enum MarkdownStyler {
             let before = match.range.location - 1
             if before >= 0, (text as NSString).character(at: before) != 0x0A {
                 storage.addAttribute(.kern, value: codePadding, range: NSRange(location: before, length: 1))
+            }
+        }
+        // An image's `!` becomes its attachment character and the rest of its markdown is hidden.
+        for image in MarkdownImage.all(in: text) where outsideCode(image.range)
+            && !spans.intersects(integersIn: image.range.location..<NSMaxRange(image.range)) {
+            let attachment = NSTextAttachment()
+            attachment.attachmentCell = PlanImageCell(url: PlanImages.resolve(image.target, base: folder),
+                                                      name: image.alt.isEmpty ? (image.target as NSString).lastPathComponent : image.alt)
+            storage.addAttribute(.attachment, value: attachment, range: NSRange(location: image.range.location, length: 1))
+            markup(NSRange(location: image.range.location + 1, length: image.range.length - 1))
+            swaps.append((image.range.location, "\u{FFFC}"))
+            // An image on a line of its own is a figure, set apart from the text around it.
+            let line = (text as NSString).lineRange(for: image.range)
+            if plain(line), (text as NSString).substring(with: line).trimmingCharacters(in: .whitespacesAndNewlines)
+                == (text as NSString).substring(with: image.range) {
+                storage.addAttribute(.paragraphStyle, value: paragraphStyle(before: 6, after: 18, lineSpacing: 0), range: line)
             }
         }
         // Code spans win over emphasis, and bold markers hug their words (CommonMark flanking),
