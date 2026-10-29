@@ -8,6 +8,7 @@
 | [`mac/`](mac/README.md) | 原生 SwiftUI macOS App | 只做审阅：AI 用 `loop review` 发起，提交后反馈自动回传；「红笔批改」风格（白纸、衬线标题、隐藏 Markdown 符号）；行内批注（朱红下划线 + 末尾圈码，悬停看、点击改） |
 | [`server/`](server/README.md) | Node.js 22+ 托管服务 | Agent 鉴权创建不可变方案，公开链接审阅，反馈落盘、Webhook 投递与鉴权轮询 |
 | [`protocol/`](protocol/README.md) | 文档 + JSON Schema | Web 版提交反馈的格式（Webhook v1） |
+| [`skills/loop-review/`](skills/loop-review/SKILL.md) | Agent Skill（SKILL.md） | 教 AI 代理怎么用 Loop：把方案写成便于批注的 Markdown、发起 `loop review`、读退出码和反馈格式、改完再审直到认可。软链到 `~/.claude/skills/`、`~/.codex/skills/` 等目录即可启用 |
 | [`examples/`](examples/) | Node 脚本 | 本地示例收件器 `receiver.mjs` 和收件箱读取器 `watch-inbox.mjs`，用来本机联调 Web 版提交；测试在 `tests/` |
 
 两端互相独立，不共享数据。构建、运行和限制见各自的 README。
