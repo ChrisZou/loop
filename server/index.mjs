@@ -52,10 +52,11 @@ async function bodyJSON(req) {
 function validateFeedback(p) {
   const error = validatePayload(p);
   if (error) return error;
-  const fields = ['protocolVersion','submissionId','agentName','document','annotations','generalFeedback','submittedAt','summary','reviewId','revision'];
+  const fields = ['protocolVersion','submissionId','agentName','document','annotations','generalFeedback','submittedAt','summary','checks','reviewId','revision'];
   if (Object.keys(p).some(k => !fields.includes(k)) || !UUID.test(p.submissionId) || !UUID.test(p.reviewId)) return 'Invalid feedback fields or IDs';
   if (!string(p.document, 30000) || !string(p.agentName, 100) || !string(p.generalFeedback, 5000) || !string(p.summary, 200000) || p.annotations.length > 100) return 'Feedback limit exceeded';
-  if (!p.annotations.length && !p.generalFeedback.trim()) return 'Feedback is empty';
+  if (Array.isArray(p.checks) && p.checks.length > 200) return 'Feedback limit exceeded';
+  if (!p.annotations.length && !p.generalFeedback.trim() && !(Array.isArray(p.checks) && p.checks.length)) return 'Feedback is empty';
   for (const a of p.annotations) {
     if (Object.keys(a).some(k => !['id','quote','comment','start','end'].includes(k)) || !string(a.id, 100) || !string(a.quote, 30000) || !string(a.comment, 5000) || a.end > 200000) return 'Invalid annotation fields or limits';
   }

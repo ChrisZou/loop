@@ -14,7 +14,13 @@ export function validatePayload(p) {
     if(!Number.isSafeInteger(a.start)||!Number.isSafeInteger(a.end)||a.start<previousEnd||a.end<=a.start||a.end-a.start!==a.quote.length) return 'Invalid, unsorted or overlapping offsets';
     previousEnd=a.end; ids.add(a.id);
   }
-  const summary='以下是我对你方案的逐条反馈，请据此修改出下一版：'+p.annotations.map((a,i)=>`\n\n${i+1}. 原文：\n> ${a.quote.replaceAll('\n','\n> ')}\n意见：${a.comment}`).join('')+(p.generalFeedback.trim()?`\n\n总体意见：${p.generalFeedback.trim()}`:'');
+  if(Object.hasOwn(p,'checks')){
+    if(!Array.isArray(p.checks)||p.checks.length>200) return 'Invalid checks';
+    for(const c of p.checks) if(!c||typeof c!=='object'||Object.keys(c).some(k=>!['text','checked'].includes(k))||typeof c.text!=='string'||!c.text.trim()||c.text.length>5000||typeof c.checked!=='boolean') return 'Invalid checks';
+  }
+  const checks=Array.isArray(p.checks)?p.checks:[];
+  const tasks=checks.length?'\n\n待办的勾选状态改为：'+checks.map(c=>`\n- [${c.checked?'x':' '}] ${c.text.trim()}`).join(''):'';
+  const summary='以下是我对你方案的逐条反馈，请据此修改出下一版：'+p.annotations.map((a,i)=>`\n\n${i+1}. 原文：\n> ${a.quote.replaceAll('\n','\n> ')}\n意见：${a.comment}`).join('')+tasks+(p.generalFeedback.trim()?`\n\n总体意见：${p.generalFeedback.trim()}`:'');
   if(p.summary!==summary) return 'Summary does not match annotations';
   return null;
 }

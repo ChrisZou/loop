@@ -37,7 +37,7 @@ npm start
 - `POST /api/feedback`：`X-Loop-Session: <session>` 和 `Content-Type: application/json`；正文为 [Webhook v1](../protocol/README.md)，必须包含 reviewId/revision。校验原方案存在、revision、agentName 和 document 完全匹配。反馈持久化后返回202 `{accepted:true,submissionId,duplicate,persisted:true}`。同 ID 同内容幂等（含重启和并发），同 ID 不同内容409。submissionId 使用小写 UUID。
 - `GET /api/reviews/<id>/feedback`：必须 Agent Bearer；返回 `{reviewId,feedback:[{payload,receivedAt,delivery}]}`，按接收时间排序。payload 是完整原始 Webhook v1 JSON；无反馈为空数组。投递状态不会泄露 Webhook 地址或密钥。
 
-反馈最多100条批注，总体意见5000字符，单条意见5000字符、引用30000字符、ID 100字符、summary 200000字符，偏移上限200000。检查偏移为整数、UTF-16长度、排序、非重叠、唯一批注ID和 summary 一致性。为保持零依赖，服务端不重复运行浏览器渲染器；quote/start/end 是不可信的显示引用，**不得直接用于自动修改原文**。Agent 应结合完整 Markdown 核验反馈。
+反馈最多100条批注、200条待办勾选，总体意见5000字符，单条意见5000字符、引用30000字符、ID 100字符、summary 200000字符，偏移上限200000。检查偏移为整数、UTF-16长度、排序、非重叠、唯一批注ID和 summary 一致性。为保持零依赖，服务端不重复运行浏览器渲染器；quote/start/end 是不可信的显示引用，**不得直接用于自动修改原文**。Agent 应结合完整 Markdown 核验反馈。
 
 ## 存储和投递
 

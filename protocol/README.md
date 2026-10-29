@@ -7,6 +7,7 @@ Web 版提交反馈用的协议。
 - document 是未修改的 Markdown 原文，绝不是 HTML。
 - start/end 是渲染并净化后的正文文本节点拼接串的 UTF-16 code unit 索引，左闭右开。与 JavaScript String.length / slice 一致，不是 Swift Character 数量、Unicode 码点数或 UTF-8 字节位置。
 - 按 DOM 顺序拼接 Text 节点，排除 [data-marker] 内的编号按钮。保留渲染器产生的真实换行，不额外为块元素、表格单元格或 br 添加分隔符。不以 innerText、selection.toString() 或 Markdown 源码计算位置。
+- 可选的顶层 `checks`：审阅人改过的待办项（`{text, checked}`，最多 200 条，text 非空）。提交的 summary 在批注之后、总体意见之前多一段「待办的勾选状态改为：」加若干 `- [x] 文字` 行；校验方按同样规则重算 summary。只有 checks 没有批注也可以提交。
 - 每条 quote 必须等于该串 slice(start,end)。重复句子由位置区分；跨加粗、行内代码等节点可形成一条批注。不得重叠；相邻范围允许。annotations 按 start 排序，编号在排序后生成。
 - 两端使用随源代码锁定的 marked + DOMPurify 渲染器。变更渲染器时重新验证 canonical fixture；不要假设其他 Markdown 引擎输出相同空白。
 - summary 固定开头「以下是我对你方案的逐条反馈，请据此修改出下一版：」，每条格式为 `\n\nN. 原文：\n> {quote}\n意见：{comment}`；quote 内每个换行后再加 `> `。非空整体意见追加 `\n\n总体意见：{trimmed generalFeedback}`。

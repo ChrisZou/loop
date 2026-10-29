@@ -20,3 +20,16 @@ header{height:64px;background:#fafaf7;padding:0 4%}.brand{font-size:21px;gap:7px
 
 /* Pin ＋批注 / comment popover to visualViewport top; safe-area bumps when notch > 4px. */
 .floating.top-pin,#comment-popover.top-pin{z-index:40;margin-top:max(0px,calc(env(safe-area-inset-top,0px) + 8px - 12px))}
+
+/* Images sit on the paper with rounded corners; a wide one shrinks to the column. */
+.markdown img{display:block;max-width:100%;height:auto;margin:18px 0;border-radius:8px;border:1px solid #e9ece2}
+.markdown p>img:only-child{margin:18px 0}
+/* Task items: a quiet box for the plan's own tick, the accent colour once the reviewer changes it. */
+.markdown li.task{list-style:none;padding-left:0;margin-left:-19px}
+.task-check{display:inline-grid;place-items:center;width:14px;height:14px;margin-right:9px;border:1.3px solid #c3cbbd;border-radius:3.5px;background:#fff;vertical-align:-1px;cursor:pointer;transition:background .12s,border-color .12s}
+.task-check:focus-visible{outline:2px solid #89bba5;outline-offset:2px}
+.task-check[aria-checked="true"]::after{content:"";width:7px;height:4px;border-left:1.7px solid #6d7c6a;border-bottom:1.7px solid #6d7c6a;transform:rotate(-45deg) translate(1px,-1px)}
+.task-check.changed{background:var(--green);border-color:var(--green)}
+.task-check.changed[aria-checked="true"]::after{border-color:#fff}
+/* A task the reviewer unticked is an empty box outlined in the accent colour. */
+.task-check.changed[aria-checked="false"]{background:#fff;border-color:var(--green);border-width:1.5px}

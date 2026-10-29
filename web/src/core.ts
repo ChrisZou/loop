@@ -2,12 +2,37 @@ import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 export interface Annotation { id: string; quote: string; comment: string; start: number; end: number }
 export interface Agent { id: string; name: string; webhook: string }
+export interface Task { index: number; text: string; checked: boolean }
 export function renderMarkdown(raw: string): string {
-  // Raw HTML is shown as text. Images are omitted to avoid unsolicited remote requests.
+  // Raw HTML is shown as text. Images load lazily and without a referrer; DOMPurify still drops unsafe URLs.
   const renderer = new marked.Renderer();
+  let tasks = 0;
   renderer.html = ({text}) => text.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
-  renderer.image = ({text}) => `[图片：${text.replaceAll('<','&lt;').replaceAll('>','&gt;')}]`;
-  return DOMPurify.sanitize(marked.parse(raw, {renderer, async:false, gfm:true}) as string, {FORBID_TAGS:['img','iframe','style','input'], FORBID_ATTR:['style']});
+  // Only http(s) and inline raster images are sources; anything else keeps its alt text as plain text.
+  renderer.image = ({href, text}) => {
+    const safe = /^(https?:|data:image\/(png|jpe?g|gif|webp|avif);base64,)/i.test(href);
+    if (!safe) return text;
+    const escape = (value: string) => value.replaceAll('&','&amp;').replaceAll('"','&quot;').replaceAll('<','&lt;');
+    return `<img src="${escape(href)}" alt="${escape(text)}" loading="lazy" referrerpolicy="no-referrer">`;
+  };
+  // A `- [ ]` item renders as a toggle the reviewer can click; it carries no text node, so anchors stay put.
+  renderer.listitem = function (item) {
+    if (!item.task) return `<li>${this.parser.parse(item.tokens)}</li>\n`;
+    // The `[ ]` token carries the box's own text; the span replaces it.
+    const index = tasks++;
+    return `<li class="task"><span class="task-check" role="checkbox" tabindex="0" aria-checked="${item.checked}" data-task="${index}" data-checked="${item.checked}"></span>${this.parser.parse(item.tokens.filter(t => t.type !== 'checkbox'))}</li>\n`;
+  };
+  return DOMPurify.sanitize(marked.parse(raw, {renderer, async:false, gfm:true}) as string, {
+    FORBID_TAGS:['iframe','style','input'], FORBID_ATTR:['style'],
+    ADD_ATTR:['loading','referrerpolicy','data-task','data-checked','aria-checked','tabindex']
+  });
+}
+/** The task items a rendered document shows, in order. */
+export function documentTasks(root: HTMLElement): Task[] {
+  return [...root.querySelectorAll<HTMLElement>('.task-check')].map((box, i) => {
+    const item = box.closest('li');
+    return { index: i, text: (item?.textContent ?? '').replace(/\s+/g, ' ').trim(), checked: box.getAttribute('data-checked') === 'true' };
+  });
 }
 export function textNodes(root: Node): Text[] {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {acceptNode(n) {
@@ -54,8 +79,12 @@ export function validateWebhook(value:string): string|null {
     return '请使用 HTTPS，或本机 localhost HTTP 地址';
   } catch { return '请输入有效的 Webhook 地址'; }
 }
-export function makePayload(document:string, annotations:Annotation[], generalFeedback:string, agentName:string, submissionId:string=crypto.randomUUID()) {
+export interface CheckedTask { text: string; checked: boolean }
+/** The submitted summary: comments in document order, then the tasks the reviewer changed, then the general note. */
+export function makePayload(document:string, annotations:Annotation[], generalFeedback:string, agentName:string, submissionId:string=crypto.randomUUID(), checks:CheckedTask[]=[]) {
   const sorted=[...annotations].sort((a,b)=>a.start-b.start);
-  const summary='以下是我对你方案的逐条反馈，请据此修改出下一版：'+sorted.map((a,i)=>`\n\n${i+1}. 原文：\n> ${a.quote.replaceAll('\n','\n> ')}\n意见：${a.comment}`).join('')+(generalFeedback.trim()?`\n\n总体意见：${generalFeedback.trim()}`:'');
-  return {protocolVersion:1,submissionId,agentName,document,annotations:sorted.map(a=>({...a})),generalFeedback,submittedAt:new Date().toISOString(),summary};
+  const changed=checks.filter(c=>c.text.trim());
+  const tasks=changed.length?`\n\n待办的勾选状态改为：`+changed.map(c=>`\n- [${c.checked?'x':' '}] ${c.text.trim()}`).join(''):'';
+  const summary='以下是我对你方案的逐条反馈，请据此修改出下一版：'+sorted.map((a,i)=>`\n\n${i+1}. 原文：\n> ${a.quote.replaceAll('\n','\n> ')}\n意见：${a.comment}`).join('')+tasks+(generalFeedback.trim()?`\n\n总体意见：${generalFeedback.trim()}`:'');
+  return {protocolVersion:1,submissionId,agentName,document,annotations:sorted.map(a=>({...a})),checks:changed.map(c=>({text:c.text.trim(),checked:c.checked})),generalFeedback,submittedAt:new Date().toISOString(),summary};
 }
