@@ -17,7 +17,9 @@ ln -sf "$PWD/bin/loop" ~/.local/bin/loop   # 一次性安装，~/.local/bin 需�
 ## 发起审阅
 
 ```sh
-loop review 方案.md          # 或：生成方案的命令 | loop review -
+loop review 方案.md                 # 或：生成方案的命令 | loop review -
+loop review --detach 方案.md        # 立刻返回 {"id":…}，适配有命令超时的 agent
+loop wait <id> [--timeout 540]      # 等待 detach 会话；超时退出码 2，可续等
 ```
 
 `loop review` 打开审阅窗口（标题是方案的第一个一级标题，没有就用文件名），然后阻塞等待：

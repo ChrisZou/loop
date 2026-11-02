@@ -1,36 +1,175 @@
 #!/bin/bash
-# loop review <plan.md|->: open a plan in Loop, wait for the user to submit, print the feedback.
-# Exit 0 with feedback on stdout after 提交; exit 1 if the window is closed without submitting.
+# loop review <plan.md|->         : open a plan in Loop, wait for submit, print feedback (stdout).
+# loop review --detach <plan.md|->: same launch, return immediately with a session id (JSON on stdout).
+# loop wait <id> [--timeout SEC]  : wait for a detached session (default timeout 540s).
+# Exit 0 + feedback after 提交; exit 1 if closed without submit; exit 2 wait timed out.
 set -euo pipefail
 
-here="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+here="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")")" && pwd)"
 app="$here/../build/Loop.app"
 
-usage() {
-    echo "用法: loop review <方案文件>    （传 - 则从标准输入读取）" >&2
-    exit 64
+detach_root() {
+  if [[ -d "$HOME/Library/Application Support" ]]; then
+    printf '%s\n' "$HOME/Library/Application Support/Loop/detach"
+  else
+    printf '%s\n' "${XDG_STATE_HOME:-$HOME/.local/state}/loop/detach"
+  fi
 }
-[[ $# -eq 2 && "$1" == review ]] || usage
-[[ -d "$app" ]] || { echo "loop: 找不到 $app，请先运行 mac/build-app.sh" >&2; exit 69; }
 
-work="$(mktemp -d "${TMPDIR:-/tmp}/loop-review.XXXXXX")"
-trap 'rm -rf "$work"' EXIT
+usage() {
+  cat >&2 <<'USAGE'
+用法:
+  loop review <方案文件>              阻塞等待提交（传 - 则从标准输入读取）
+  loop review --detach <方案文件>     立即返回会话 id，另用 loop wait 取反馈
+  loop wait <会话id> [--timeout 秒]   等待 detach 会话（默认 540）
+USAGE
+  exit 64
+}
 
-if [[ "$2" == - ]]; then
+resolve_plan() {
+  # $1 = path or -
+  # sets: plan (absolute readable non-empty file)
+  local src="$1" work="${2:-}"
+  if [[ "$src" == - ]]; then
+    [[ -n "$work" ]] || { echo "loop: 内部错误：stdin 需要工作目录" >&2; exit 70; }
     plan="$work/方案.md"
     cat > "$plan"
-else
-    plan="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
-fi
-[[ -r "$plan" && -s "$plan" ]] || { echo "loop: 无法读取方案或方案为空：$2" >&2; exit 66; }
+  else
+    [[ -n "$src" ]] || usage
+    plan="$(cd "$(dirname "$src")" && pwd)/$(basename "$src")"
+  fi
+  [[ -r "$plan" && -s "$plan" ]] || { echo "loop: 无法读取方案或方案为空：$src" >&2; exit 66; }
+}
 
-# Launch through LaunchServices so the window comes to the front; -n allows several reviews at once.
-out="$work/feedback.txt"
-open -n -W "$app" --args --review "$plan" --out "$out"
+launch_review() {
+  # $1 = plan path, $2 = out path; honors LOOP_OPEN_CMD for tests
+  local plan_path="$1" out_path="$2"
+  if [[ -n "${LOOP_OPEN_CMD:-}" ]]; then
+    # shellcheck disable=SC2086
+    eval "$LOOP_OPEN_CMD" -- "$plan_path" "$out_path"
+    return
+  fi
+  [[ -d "$app" ]] || { echo "loop: 找不到 $app，请先运行 mac/build-app.sh" >&2; exit 69; }
+  open -n -W "$app" --args --review "$plan_path" --out "$out_path"
+}
 
-if [[ -s "$out" ]]; then
+cmd_review_blocking() {
+  local src="${1:-}"
+  [[ -n "$src" ]] || usage
+  local work
+  work="$(mktemp -d "${TMPDIR:-/tmp}/loop-review.XXXXXX")"
+  trap 'rm -rf "$work"' EXIT
+  resolve_plan "$src" "$work"
+  local out="$work/feedback.txt"
+  launch_review "$plan" "$out"
+  if [[ -s "$out" ]]; then
     cat "$out"
-else
+  else
     echo "loop: 未提交（Loop 窗口已关闭）" >&2
     exit 1
-fi
+  fi
+}
+
+cmd_review_detach() {
+  local src="${1:-}"
+  [[ -n "$src" ]] || usage
+  local root id session
+  root="$(detach_root)"
+  mkdir -p "$root"
+  id="$(uuidgen 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())')"
+  id="$(printf '%s' "$id" | tr '[:upper:]' '[:lower:]')"
+  session="$root/$id"
+  mkdir -p "$session"
+  resolve_plan "$src" "$session"
+  # Keep a stable copy so the session survives cwd changes / temp stdin.
+  if [[ "$plan" != "$session/方案.md" ]]; then
+    cp "$plan" "$session/方案.md"
+    plan="$session/方案.md"
+  fi
+  local out="$session/feedback.txt"
+  : > "$session/status"
+  printf '%s\n' "pending" > "$session/status"
+  cat > "$session/meta.json" <<META
+{"id":"$id","plan":"$plan","createdAt":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+META
+  # Background waiter: same semantics as blocking review, writes status when the app exits.
+  (
+    set +e
+    launch_review "$plan" "$out"
+    if [[ -s "$out" ]]; then
+      printf '%s\n' "submitted" > "$session/status"
+    else
+      printf '%s\n' "closed" > "$session/status"
+    fi
+  ) >/dev/null 2>"$session/waiter.err" &
+  echo $! > "$session/waiter.pid"
+  printf '{"id":"%s","status":"pending"}\n' "$id"
+}
+
+cmd_wait() {
+  local id="" timeout=540
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --timeout)
+        [[ $# -ge 2 ]] || usage
+        timeout="$2"; shift 2
+        [[ "$timeout" =~ ^[0-9]+$ ]] || { echo "loop: --timeout 需要非负整数" >&2; exit 64; }
+        ;;
+      -*)
+        usage
+        ;;
+      *)
+        [[ -z "$id" ]] || usage
+        id="$1"; shift
+        ;;
+    esac
+  done
+  [[ -n "$id" ]] || usage
+  id="$(printf '%s' "$id" | tr '[:upper:]' '[:lower:]')"
+  local session out status
+  session="$(detach_root)/$id"
+  out="$session/feedback.txt"
+  [[ -d "$session" ]] || { echo "loop: 找不到会话 $id" >&2; exit 66; }
+  local deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    if [[ -s "$out" ]]; then
+      printf '%s\n' "submitted" > "$session/status"
+      cat "$out"
+      exit 0
+    fi
+    status="$(tr -d '[:space:]' < "$session/status" 2>/dev/null || true)"
+    if [[ "$status" == "closed" ]]; then
+      echo "loop: 未提交（Loop 窗口已关闭）" >&2
+      exit 1
+    fi
+    if [[ "$status" == "submitted" && -s "$out" ]]; then
+      cat "$out"
+      exit 0
+    fi
+    if (( $(date +%s) >= deadline )); then
+      echo "loop: 等待超时（${timeout}s），会话仍未提交" >&2
+      exit 2
+    fi
+    sleep 1
+  done
+}
+
+[[ $# -ge 1 ]] || usage
+case "$1" in
+  review)
+    shift
+    if [[ "${1:-}" == "--detach" ]]; then
+      shift
+      cmd_review_detach "${1:-}"
+    else
+      cmd_review_blocking "${1:-}"
+    fi
+    ;;
+  wait)
+    shift
+    cmd_wait "$@"
+    ;;
+  *)
+    usage
+    ;;
+esac
