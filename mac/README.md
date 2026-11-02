@@ -53,3 +53,17 @@ LOOP_DEMO=1 LOOP_DEMO_PREVIEW=1 .build/release/Loop
 `--selftest` 不启动界面、不读写暂存，使用临时目录，校验提交的完整格式、排序、多行引文和意见、选区修剪与引文去除 Markdown 符号、行内图标位置、悬停预览（离屏窗口里走真实的文字命中逻辑）、表格（单元格划分、对齐、同一行单元格横向并排、跨单元格引文、复制原文、代码块和无分隔行的竖线不算表格）、图片（替换成附件字符后下标不变、隐藏语法、`<>` 路径和标题、`%20` 路径、相对方案目录解析、缩到正文宽度、缺失图片、代码里不算、引文写成「[图片：说明]」）、任务列表（识别与隐藏前缀、点击复选框切换、导出格式、勾选随草稿保存、连续待办项的段间距）、输入法拼写中总评和批注输入框的占位文字让位（离屏渲染后读像素）、附图（导出格式、旧草稿兼容、粘贴截图 / TIFF / 图片文件、文字照常粘贴、非图片文件忽略、只有图片的批注和总评、在窗口里发真实 `⌘V` 键盘事件粘贴、拖进来的图片文件不会变成路径文字、卡片随图片变高、过期图片清理）、审阅参数解析、提交内容与反馈文件写入、演示数据和 JSON 往返；失败时返回非零退出码。
 
 提交格式由纯函数 `FeedbackExporter.export(text:comments:generals:hidden:checks:)` 生成，位于 `Sources/Loop/FeedbackExporter.swift`。
+
+## 发布（签名 zip / Homebrew）
+
+在一台已导入 Developer ID 证书的 Mac 上：
+
+```sh
+./scripts/package-release.sh
+# 可选公证：LOOP_NOTARY_PROFILE=你的notarytool钥匙串配置名 ./scripts/package-release.sh
+```
+
+产物在 `build/release/Loop-<版本>-macos.zip`（含 `Loop.app`，CLI 在 `Contents/Resources/loop`）。上传到 GitHub Release 后，更新 [`homebrew/loop.rb`](homebrew/loop.rb) 的 `version` / `sha256`，推到你的 Homebrew tap。
+
+当前仓库内的 cask 是草稿：tap 名、是否公证、是否由 CI 发 Release，需你定。
+
