@@ -108,6 +108,10 @@ node <skill 目录>/scripts/web-review.mjs wait <reviewId> --timeout 540
 
 网页版至少要有一条批注、改一处待办勾选或写总体意见才能提交，所以用户认可时通常是总体意见里写「可以」「没问题」之类，按意思判断；只提交了勾选也算有反馈。
 
+## 2C. MCP（可选）
+
+仓库 `mcp/server.mjs` 提供 stdio MCP：`loop_web_create` / `loop_web_wait` / `loop_mac_detach` / `loop_mac_wait`，行为与上面脚本和 CLI 相同。已配置 Loop MCP 时优先用工具，不必再手敲命令。详见 `mcp/README.md`。
+
 ## 3. 读反馈
 
 **Mac 端用户认可**：输出正好是 `我看过了这版方案，没有修改意见，可以按这版继续。`，审阅结束，按这版继续做。

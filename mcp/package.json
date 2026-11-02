@@ -1,0 +1,11 @@
+{
+  "name": "loop-mcp",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=18"},
+  "bin": {"loop-mcp": "./server.mjs"},
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test.mjs"
+  }
+}
