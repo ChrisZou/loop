@@ -46,7 +46,7 @@ enum SelfTest {
 
         // Restored sessions are never saved, which keeps self-tests away from the user's drafts.
         func reviewing(_ session: Session) -> SessionStore {
-            SessionStore(review: ReviewRequest(source: URL(fileURLWithPath: "方案.md"), output: nil, text: session.text),
+            SessionStore(review: ReviewRequest(source: URL(fileURLWithPath: "方案.md"), output: nil, text: session.text, agentName: "SelfTest"),
                          restoring: session)
         }
         let store = reviewing(Session(text: text, comments: [first, last]))
@@ -527,8 +527,11 @@ enum SelfTest {
             let request = try ReviewRequest.parse(["Loop", "--review", plan.path, "--out", out.path])
             check(request?.text == text && request?.output == out.standardizedFileURL && request?.title == "方案.md",
                   "parse review arguments")
+            check(request?.agentName == "Agent", "default agent name")
+            let named = try ReviewRequest.parse(["Loop", "--review", plan.path, "--agent", "Codex"])
+            check(named?.agentName == "Codex", "parse --agent")
             let normal = try ReviewRequest.parse(["Loop"])
-            check(normal == nil, "no review flag means normal mode")
+            check(normal == nil, "no review flag means history home")
             check((try? ReviewRequest.parse(["Loop", "--review"])) == nil, "missing review path is rejected")
             check((try? ReviewRequest.parse(["Loop", "--review", folder.appendingPathComponent("无").path])) == nil,
                   "unreadable plan is rejected")
@@ -538,6 +541,55 @@ enum SelfTest {
             let delivered = try String(contentsOf: out, encoding: .utf8)
             check(delivered == "反馈\n", "deliver writes feedback file")
         } catch { check(false, "review request: \(error)") }
+
+        // Approval history: append, load newest-first, keep document and feedback.
+        do {
+            let historyFolder = FileManager.default.temporaryDirectory.appendingPathComponent("loop-history-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: historyFolder) }
+            try FileManager.default.createDirectory(at: historyFolder, withIntermediateDirectories: true)
+            let plan = historyFolder.appendingPathComponent("方案.md")
+            let out = historyFolder.appendingPathComponent("feedback.txt")
+            try text.write(to: plan, atomically: true, encoding: .utf8)
+            let historyRoot = historyFolder.appendingPathComponent("history")
+            let history = HistoryStore(root: historyRoot)
+            let older = HistoryEntry(id: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!,
+                                     title: "旧方案", agentName: "A", channel: .mac,
+                                     document: "# 旧", feedback: "旧反馈",
+                                     submittedAt: "2026-01-01T00:00:00Z", sourcePath: "/tmp/old.md")
+            let newer = HistoryEntry(id: UUID(uuidString: "22222222-2222-4222-8222-222222222222")!,
+                                     title: "新方案", agentName: "Bot", channel: .web,
+                                     document: "# 新\n正文", feedback: "新反馈",
+                                     submittedAt: "2026-11-02T12:00:00Z")
+            try history.append(older)
+            try history.append(newer)
+            let loaded = history.load()
+            check(loaded.map(\.id) == [newer.id, older.id], "history loads newest first")
+            check(loaded[0].channel == .web && loaded[0].channel.label == "网页", "web channel label")
+            check(loaded[1].channel.label == "本机", "mac channel label")
+            check(loaded[0].document == newer.document && loaded[0].feedback == newer.feedback,
+                  "history keeps full document and feedback")
+            let round = try JSONDecoder().decode(HistoryEntry.self, from: JSONEncoder().encode(newer))
+            check(round == newer, "history entry JSON round trip")
+
+            let previous = HistoryStore.shared
+            HistoryStore.shared = HistoryStore(root: historyRoot.appendingPathComponent("from-submit"))
+            defer { HistoryStore.shared = previous }
+            // restoring: keeps this check off the user's draft folder.
+            let persistStore = SessionStore(
+                review: ReviewRequest(source: plan, output: out, text: text, agentName: "LoopBot"),
+                restoring: Session(text: text)
+            )
+            persistStore.generalDraft = "范围收紧"
+            persistStore.composingGeneral = true
+            persistStore.saveGeneral()
+            persistStore.recordHistory()
+            let recorded = HistoryStore.shared.load()
+            check(recorded.count == 1 && recorded[0].agentName == "LoopBot" && recorded[0].channel == .mac,
+                  "submit records mac history with agent name")
+            check(recorded[0].feedback.contains("范围收紧") && recorded[0].document == text,
+                  "recorded history includes document and feedback")
+            check(recorded[0].title == persistStore.documentTitle, "recorded title matches document title")
+        } catch { check(false, "history store: \(error)") }
 
         print(output)
         print("\nSELFTEST PASSED (\(checks) checks)")

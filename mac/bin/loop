@@ -19,9 +19,11 @@ detach_root() {
 usage() {
   cat >&2 <<'USAGE'
 用法:
-  loop review <方案文件>              阻塞等待提交（传 - 则从标准输入读取）
-  loop review --detach <方案文件>     立即返回会话 id，另用 loop wait 取反馈
-  loop wait <会话id> [--timeout 秒]   等待 detach 会话（默认 540）
+  loop review [--agent 名称] <方案文件>           阻塞等待提交（传 - 则从标准输入读取）
+  loop review --detach [--agent 名称] <方案文件>  立即返回会话 id，另用 loop wait 取反馈
+  loop wait <会话id> [--timeout 秒]              等待 detach 会话（默认 540）
+
+Agent 名称也可通过环境变量 LOOP_AGENT_NAME 传入；默认 Agent。
 USAGE
   exit 64
 }
@@ -43,14 +45,19 @@ resolve_plan() {
 
 launch_review() {
   # $1 = plan path, $2 = out path; honors LOOP_OPEN_CMD for tests
+  # Optional agent name in LOOP_REVIEW_AGENT (set by review command parsing).
   local plan_path="$1" out_path="$2"
+  local agent_args=()
+  if [[ -n "${LOOP_REVIEW_AGENT:-}" ]]; then
+    agent_args=(--agent "$LOOP_REVIEW_AGENT")
+  fi
   if [[ -n "${LOOP_OPEN_CMD:-}" ]]; then
     # shellcheck disable=SC2086
     eval "$LOOP_OPEN_CMD" -- "$plan_path" "$out_path"
     return
   fi
   [[ -d "$app" ]] || { echo "loop: 找不到 $app，请先运行 mac/build-app.sh" >&2; exit 69; }
-  open -n -W "$app" --args --review "$plan_path" --out "$out_path"
+  open -n -W "$app" --args --review "$plan_path" --out "$out_path" "${agent_args[@]}"
 }
 
 cmd_review_blocking() {
@@ -154,15 +161,50 @@ cmd_wait() {
   done
 }
 
+parse_review_args() {
+  # Sets: LOOP_REVIEW_AGENT (optional), REVIEW_DETACH (0/1), REVIEW_SRC
+  REVIEW_DETACH=0
+  REVIEW_SRC=""
+  LOOP_REVIEW_AGENT="${LOOP_AGENT_NAME:-}"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --detach)
+        REVIEW_DETACH=1
+        shift
+        ;;
+      --agent)
+        [[ $# -ge 2 ]] || usage
+        LOOP_REVIEW_AGENT="$2"
+        shift 2
+        ;;
+      -)
+        [[ -z "$REVIEW_SRC" ]] || usage
+        REVIEW_SRC="-"
+        shift
+        ;;
+      -*)
+        usage
+        ;;
+      *)
+        [[ -z "$REVIEW_SRC" ]] || usage
+        REVIEW_SRC="$1"
+        shift
+        ;;
+    esac
+  done
+  [[ -n "$REVIEW_SRC" ]] || usage
+  export LOOP_REVIEW_AGENT
+}
+
 [[ $# -ge 1 ]] || usage
 case "$1" in
   review)
     shift
-    if [[ "${1:-}" == "--detach" ]]; then
-      shift
-      cmd_review_detach "${1:-}"
+    parse_review_args "$@"
+    if [[ "$REVIEW_DETACH" -eq 1 ]]; then
+      cmd_review_detach "$REVIEW_SRC"
     else
-      cmd_review_blocking "${1:-}"
+      cmd_review_blocking "$REVIEW_SRC"
     fi
     ;;
   wait)

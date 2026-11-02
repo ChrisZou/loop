@@ -240,8 +240,27 @@ final class SessionStore: ObservableObject {
         }
         submitted = true
         saveWork?.cancel()
-        if persists { try? FileManager.default.removeItem(at: review.draftURL) }
+        if persists {
+            try? FileManager.default.removeItem(at: review.draftURL)
+            recordHistory()
+        }
         NSApp.terminate(nil)
+    }
+
+    /// Keeps a Mac-local copy of this submission for the cold-start history home.
+    func recordHistory(into history: HistoryStore = .shared) {
+        let entry = HistoryEntry(
+            title: documentTitle,
+            agentName: review.agentName,
+            channel: .mac,
+            document: text,
+            feedback: submission,
+            submittedAt: HistoryStore.nowISO(),
+            sourcePath: review.source.path
+        )
+        do { try history.append(entry) } catch {
+            persistenceError = "历史记录保存失败：\(error.localizedDescription)"
+        }
     }
 
     private func scheduleSave() {

@@ -13,11 +13,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        // History home has no review session.
+        guard let store else { return }
         // A 总评 still in the composer is kept as a note, like a comment card left open.
-        store?.saveGeneral()
-        store?.saveNow()
+        store.saveGeneral()
+        store.saveNow()
         // Closing a review without submitting must not look like an approval to the waiting agent.
-        if let store, !store.submitted {
+        if !store.submitted {
             FileHandle.standardError.write(Data("Loop：未提交，批注已暂存，再次打开同一方案会恢复\n".utf8))
             exit(1)
         }
@@ -26,30 +28,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 struct LoopApp: App {
-    /// Set by `LoopMain` before launch: Loop always opens exactly one review.
-    static var launchStore: SessionStore!
+    /// Set by `LoopMain` before launch. Nil opens the approval-history home.
+    static var launchStore: SessionStore?
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    @StateObject private var store = LoopApp.launchStore
 
     var body: some Scene {
         Window("Loop", id: "main") {
-            ContentView(store: store)
-                .tint(Color(Theme.vermilion))
-                .onAppear { delegate.store = store }
+            Group {
+                if let store = Self.launchStore {
+                    ContentView(store: store)
+                        .onAppear { delegate.store = store }
+                } else {
+                    HistoryHomeView()
+                }
+            }
+            .tint(Color(Theme.vermilion))
         }
         .defaultSize(width: 1080, height: 800)
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
             CommandGroup(replacing: .newItem) {}
-            CommandMenu("批注") {
-                Button(store.draft != nil ? "保存批注" : store.composingGeneral ? "保存总评" : "添加批注", action: store.commitShortcut)
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(!store.canCommitShortcut)
-                Divider()
-                Button("预览提交内容") { store.preview = true }
-                Button("提交", action: store.requestSubmit)
-                    .keyboardShortcut(.return, modifiers: [.command, .shift])
+            if let store = Self.launchStore {
+                CommandMenu("批注") {
+                    Button(store.draft != nil ? "保存批注" : store.composingGeneral ? "保存总评" : "添加批注", action: store.commitShortcut)
+                        .keyboardShortcut(.return, modifiers: .command)
+                        .disabled(!store.canCommitShortcut)
+                    Divider()
+                    Button("预览提交内容") { store.preview = true }
+                    Button("提交", action: store.requestSubmit)
+                        .keyboardShortcut(.return, modifiers: [.command, .shift])
+                }
             }
         }
     }
@@ -69,35 +78,16 @@ enum LoopMain {
             LoopApp.launchStore = store
         } else {
             do {
-                guard let request = try ReviewRequest.parse(CommandLine.arguments) else { explainUsage() }
-                LoopApp.launchStore = SessionStore(review: request)
+                if let request = try ReviewRequest.parse(CommandLine.arguments) {
+                    LoopApp.launchStore = SessionStore(review: request)
+                } else {
+                    LoopApp.launchStore = nil
+                }
             } catch {
                 FileHandle.standardError.write(Data("Loop：\(error.localizedDescription)\n".utf8))
                 exit(64)
             }
         }
         LoopApp.main()
-    }
-
-    /// Opened from Finder or without arguments: there is nothing to review, so say how reviews start.
-    private static func explainUsage() -> Never {
-        FileHandle.standardError.write(Data("用法：loop review <方案.md>\n".utf8))
-        let delegate = UsageDelegate()
-        NSApplication.shared.delegate = delegate
-        NSApplication.shared.setActivationPolicy(.regular)
-        NSApplication.shared.run()
-        exit(64)
-    }
-}
-
-/// The alert waits for launch to finish, so it comes to the front like any other app window.
-private final class UsageDelegate: NSObject, NSApplicationDelegate {
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.activate(ignoringOtherApps: true)
-        let alert = NSAlert()
-        alert.messageText = "Loop 用来审阅 AI 发来的方案"
-        alert.informativeText = "由 AI 在终端运行 loop review 方案.md 打开审阅窗口。逐条批注后点「提交」，反馈会直接回到 AI。"
-        alert.runModal()
-        exit(64)
     }
 }

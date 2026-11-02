@@ -8,6 +8,8 @@ struct ReviewRequest {
     let source: URL
     let output: URL?
     let text: String
+    /// Who opened this review (`--agent` or `LOOP_AGENT_NAME`, default Agent).
+    let agentName: String
 
     enum ParseError: LocalizedError {
         case missingValue(String)
@@ -31,7 +33,18 @@ struct ReviewRequest {
         let text: String
         do { text = try String(contentsOf: source, encoding: .utf8) } catch { throw ParseError.unreadable(path, error) }
         let output = try value(after: "--out").map { URL(fileURLWithPath: $0).standardizedFileURL }
-        return ReviewRequest(source: source, output: output, text: text)
+        let flagged = try value(after: "--agent")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fromEnv = ProcessInfo.processInfo.environment["LOOP_AGENT_NAME"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let agentName: String
+        if let flagged, !flagged.isEmpty {
+            agentName = flagged
+        } else if let fromEnv, !fromEnv.isEmpty {
+            agentName = fromEnv
+        } else {
+            agentName = "Agent"
+        }
+        return ReviewRequest(source: source, output: output, text: text, agentName: agentName)
     }
 
     var title: String { source.lastPathComponent }

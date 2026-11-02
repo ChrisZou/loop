@@ -17,17 +17,18 @@ ln -sf "$PWD/bin/loop" ~/.local/bin/loop   # 一次性安装，~/.local/bin 需�
 ## 发起审阅
 
 ```sh
-loop review 方案.md                 # 或：生成方案的命令 | loop review -
-loop review --detach 方案.md        # 立刻返回 {"id":…}，适配有命令超时的 agent
-loop wait <id> [--timeout 540]      # 等待 detach 会话；超时退出码 2，可续等
+loop review 方案.md                      # 或：生成方案的命令 | loop review -
+loop review --agent Codex 方案.md        # 记录来源 agent（也可用 LOOP_AGENT_NAME）
+loop review --detach 方案.md             # 立刻返回 {"id":…}，适配有命令超时的 agent
+loop wait <id> [--timeout 540]           # 等待 detach 会话；超时退出码 2，可续等
 ```
 
 `loop review` 打开审阅窗口（标题是方案的第一个一级标题，没有就用文件名），然后阻塞等待：
 
 - 点右上角「提交」或按 `⇧⌘↩`：反馈打印到标准输出，退出码 0。没有批注、总评，也没改过勾选时会先确认，提交内容为「我看过了这版方案，没有修改意见，可以按这版继续。」
-- 没提交就关窗：标准错误输出「未提交」，退出码 1。批注暂存在 `~/Library/Application Support/Loop/reviews/`，再次审阅同一份方案会恢复，提交后删除。
+- 没提交就关窗：标准错误输出「未提交」，退出码 1。批注暂存在 `~/Library/Application Support/Loop/reviews/`，再次审阅同一份方案会恢复，提交后删除。提交成功后会追加一条记录到 `~/Library/Application Support/Loop/history/`（含方案全文与反馈），冷启动首页可打开查看。网页端历史合并待接。
 
-AI 代理在后台运行这条命令，命令结束就是用户提交了，读取输出即可拿到反馈。每次审阅是独立进程（`open -n`）。也可以直接运行 `Loop --review <文件> [--out <反馈文件>]`，不传 `--out` 时反馈写到标准输出。不带参数打开 Loop（例如在 Finder 里双击）只会提示用法，退出码 64。
+AI 代理在后台运行这条命令，命令结束就是用户提交了，读取输出即可拿到反馈。每次审阅是独立进程（`open -n`）。也可以直接运行 `Loop --review <文件> [--out <反馈文件>] [--agent <名称>]`，不传 `--out` 时反馈写到标准输出。不带参数打开 Loop（例如在 Finder 里双击）进入批注记录首页，可回看本机已提交的方案与反馈。
 
 ## 使用
 
