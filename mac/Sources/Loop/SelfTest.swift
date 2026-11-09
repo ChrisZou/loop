@@ -591,6 +591,82 @@ enum SelfTest {
             check(recorded[0].title == persistStore.documentTitle, "recorded title matches document title")
         } catch { check(false, "history store: \(error)") }
 
+        do {
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("loop-setup-\(UUID().uuidString)")
+            defer { try? fm.removeItem(at: root) }
+            let home = root.appendingPathComponent("home")
+            let resources = root.appendingPathComponent("Loop.app/Contents/Resources")
+            try fm.createDirectory(at: home, withIntermediateDirectories: true)
+            try fm.createDirectory(at: resources.appendingPathComponent("skills/loop-review"), withIntermediateDirectories: true)
+            try "#!/bin/bash\n# loop review\n".write(to: resources.appendingPathComponent("loop"), atomically: true, encoding: .utf8)
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: resources.appendingPathComponent("loop").path)
+            try "skill".write(to: resources.appendingPathComponent("skills/loop-review/SKILL.md"), atomically: true, encoding: .utf8)
+            // A login shell whose PATH gains ~/.local/bin only once ~/.zshenv says so.
+            let shell = root.appendingPathComponent("zsh")
+            try "#!/bin/sh\nif grep -q local/bin \"$HOME/.zshenv\" 2>/dev/null; then d=\"$HOME/.local/bin\"; else d=/nowhere; fi\nprintf '__LOOP_PATH__/usr/bin:%s__LOOP_END__' \"$d\"\n"
+                .write(to: shell, atomically: true, encoding: .utf8)
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shell.path)
+
+            let setup = AgentSetup(home: home, resources: resources, bundlePath: root.appendingPathComponent("Loop.app").path,
+                                   shell: shell.path, systemBins: [])
+            let link = home.appendingPathComponent(".local/bin/loop")
+            let zshenv = home.appendingPathComponent(".zshenv")
+            check(setup.isBundled, "setup finds the bundled CLI and skill")
+            check(!setup.cliInstalled, "setup sees a missing CLI")
+
+            let unbundled = AgentSetup(home: home, resources: root, bundlePath: "", shell: shell.path, systemBins: [])
+            check(!unbundled.isBundled, "setup is skipped outside the app bundle")
+
+            let onlyDefault = setup.steps(pathProfile: nil)
+            check(onlyDefault.map(\.title) == ["命令行工具", "Claude Code Skill"], "no agent yet: installs for Claude Code")
+
+            try fm.createDirectory(at: home.appendingPathComponent(".claude"), withIntermediateDirectories: true)
+            try fm.createDirectory(at: home.appendingPathComponent(".codex"), withIntermediateDirectories: true)
+            let profile = setup.profileNeeded(loginPath: setup.loginPath())
+            check(profile == zshenv, "PATH without ~/.local/bin asks to edit the zsh profile")
+            check(setup.profileNeeded(loginPath: "/usr/bin:\(home.path)/.local/bin") == nil, "PATH already has ~/.local/bin")
+
+            // A dotfile manager's symlink has to survive the edit.
+            let realProfile = root.appendingPathComponent("dotfiles-zshenv")
+            try "export A=1\n".write(to: realProfile, atomically: true, encoding: .utf8)
+            try fm.createSymbolicLink(at: zshenv, withDestinationURL: realProfile)
+
+            // A dangling link from a moved app is repaired.
+            try fm.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.createSymbolicLink(at: link, withDestinationURL: root.appendingPathComponent("gone/loop"))
+
+            let steps = setup.steps(pathProfile: profile)
+            check(steps.map(\.title) == ["命令行工具", "PATH", "Claude Code Skill", "Codex Skill"] && steps.allSatisfy { !$0.done }, "all four steps pending")
+            for step in steps { try setup.perform(step) }
+            check(setup.cliInstalled && setup.steps(pathProfile: nil).allSatisfy(\.done), "setup completes every step")
+            let linked = try fm.destinationOfSymbolicLink(atPath: link.path)
+            check(linked == resources.appendingPathComponent("loop").path, "CLI links into the bundle")
+            check((try? fm.destinationOfSymbolicLink(atPath: zshenv.path)) != nil, "profile symlink preserved")
+            let profileText = try String(contentsOf: realProfile, encoding: .utf8)
+            check(profileText.hasPrefix("export A=1\n") && profileText.contains("export PATH=\"$HOME/.local/bin:$PATH\""), "profile appended, not rewritten")
+            try setup.perform(steps[1])
+            let profileAgain = try String(contentsOf: realProfile, encoding: .utf8)
+            check(profileAgain == profileText, "profile edit is idempotent")
+
+            // Whatever the user put at a target stays there.
+            let foreignSetup = AgentSetup(home: root.appendingPathComponent("home2"), resources: resources, bundlePath: "", shell: shell.path, systemBins: [])
+            let foreign = root.appendingPathComponent("home2/.local/bin/loop")
+            try fm.createDirectory(at: foreign.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try "#!/bin/sh\necho other tool\n".write(to: foreign, atomically: true, encoding: .utf8)
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: foreign.path)
+            check(!foreignSetup.cliInstalled, "another program named loop is not the Loop CLI")
+            var refused = false
+            do { try foreignSetup.perform(foreignSetup.steps(pathProfile: nil)[0]) } catch SetupError.occupied { refused = true }
+            let foreignText = try String(contentsOf: foreign, encoding: .utf8)
+            check(refused && foreignText.contains("other tool"), "never overwrites another program")
+
+            let translocated = AgentSetup(home: home, resources: resources, bundlePath: "/private/var/folders/x/AppTranslocation/y/Loop.app", shell: shell.path, systemBins: [])
+            var translocationRefused = false
+            do { try translocated.perform(steps[0]) } catch SetupError.translocated { translocationRefused = true }
+            check(translocationRefused, "refuses to link into a translocated app")
+        } catch { check(false, "agent setup: \(error)") }
+
         print(output)
         print("\nSELFTEST PASSED (\(checks) checks)")
     }

@@ -63,4 +63,24 @@ id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$json"
 out="$("$LOOP" wait "$id" --timeout 10)"
 [[ "$out" == "feedback-ok" ]] || { echo "fail stdin: $out" >&2; exit 1; }
 
+# --- CLI inside Loop.app, reached through a symlink, opens that app ---
+unset LOOP_OPEN_CMD
+bundle="$STATE/Some Apps/Loop.app"
+mkdir -p "$bundle/Contents/Resources" "$STATE/fakebin" "$HOME/.local/bin"
+cp "$LOOP" "$bundle/Contents/Resources/loop"
+ln -s "$bundle/Contents/Resources/loop" "$HOME/.local/bin/loop"
+cat > "$STATE/fakebin/open" <<'FAKE'
+#!/bin/bash
+printf '%s\n' "$3" > "$OPENED_APP"
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == --out ]]; then printf 'bundled-ok\n' > "$2"; fi
+  shift
+done
+FAKE
+chmod +x "$STATE/fakebin/open"
+export OPENED_APP="$STATE/opened"
+out="$(PATH="$STATE/fakebin:$PATH" "$HOME/.local/bin/loop" review "$plan")"
+[[ "$out" == "bundled-ok" ]] || { echo "fail bundled: $out" >&2; exit 1; }
+[[ "$(cat "$OPENED_APP")" -ef "$bundle" ]] || { echo "fail bundled app: $(cat "$OPENED_APP")" >&2; exit 1; }
+
 echo "loop-cli.test.sh: ok"

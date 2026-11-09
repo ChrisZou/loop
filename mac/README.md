@@ -14,6 +14,8 @@ ln -sf "$PWD/bin/loop" ~/.local/bin/loop   # 一次性安装，~/.local/bin 需�
 
 `build-app.sh` 生成 `build/Loop.app`，Bundle ID 为 `com.chris.loop`，默认使用钥匙串里第一张 Developer ID Application 证书签名，可用 `LOOP_SIGNING_IDENTITY` 指定，找不到证书时退回 ad-hoc 签名。此构建未公证。
 
+命令行工具和 `loop-review` skill 打包在 App 内。打开 App 时如果缺少它们，会先显示安装页：把 `loop` 软链到 `~/.local/bin/`，把 skill 软链到 `~/.claude/skills/`、`~/.codex/skills/`（只装已存在的 Agent，都没有时装 Claude Code）；登录 shell 的 PATH 里没有 `~/.local/bin` 时，再往 shell 配置（zsh 为 `~/.zshenv`）追加一行。`loop review` 发起的审阅窗口不经过安装页。
+
 ## 发起审阅
 
 ```sh

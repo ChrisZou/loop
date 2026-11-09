@@ -29,8 +29,14 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+# The CLI and skill the app installs. These must be in place before signing seals the bundle.
+cp bin/loop "$APP/Contents/Resources/loop"
+chmod +x "$APP/Contents/Resources/loop"
+rm -rf "$APP/Contents/Resources/skills"
+mkdir -p "$APP/Contents/Resources/skills"
+cp -R ../skills/loop-review "$APP/Contents/Resources/skills/"
 # LOOP_SIGNING_IDENTITY picks a certificate; otherwise use the first Developer ID in the keychain.
-SIGNING_IDENTITY="${LOOP_SIGNING_IDENTITY:-$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application: .*\)"$/\1/p' | head -n 1)}"
+SIGNING_IDENTITY="${LOOP_SIGNING_IDENTITY:-$(security find-identity -v -p codesigning | awk -F'"' '$2 ~ /^Developer ID Application: / && !found { print $2; found = 1 }')}"
 if [ -n "$SIGNING_IDENTITY" ]; then
     codesign --force --deep -s "$SIGNING_IDENTITY" "$APP"
 else

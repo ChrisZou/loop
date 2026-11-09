@@ -6,7 +6,10 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")")" && pwd)"
-app="$here/../build/Loop.app"
+case "$here" in
+  */Contents/Resources) app="$(cd "$here/../.." && pwd)" ;; # installed from inside Loop.app
+  *) app="$here/../build/Loop.app" ;;
+esac
 
 detach_root() {
   if [[ -d "$HOME/Library/Application Support" ]]; then
@@ -57,13 +60,14 @@ launch_review() {
     return
   fi
   [[ -d "$app" ]] || { echo "loop: 找不到 $app，请先运行 mac/build-app.sh" >&2; exit 69; }
-  open -n -W "$app" --args --review "$plan_path" --out "$out_path" "${agent_args[@]}"
+  # The +-guard: macOS bash 3.2 with set -u rejects expanding an empty array.
+  open -n -W "$app" --args --review "$plan_path" --out "$out_path" ${agent_args[@]+"${agent_args[@]}"}
 }
 
 cmd_review_blocking() {
   local src="${1:-}"
   [[ -n "$src" ]] || usage
-  local work
+  # Not local: the EXIT trap runs after this function has returned.
   work="$(mktemp -d "${TMPDIR:-/tmp}/loop-review.XXXXXX")"
   trap 'rm -rf "$work"' EXIT
   resolve_plan "$src" "$work"

@@ -77,7 +77,7 @@ loop wait <id> --timeout 540
 | 1 | 用户没提交就关了窗口（stderr：`loop: 未提交`） | 不要自动重开。问用户是要继续审、改了再审，还是先不审了 |
 | 2 | `wait` 到点了还没提交 | 再调 `wait` |
 | 64 / 66 | 用法错误 / 文件读不到或为空 / 会话 id 不存在 | 检查路径和内容后重试 |
-| 69 或 `command not found` | 没装 Loop | 让用户构建：`cd <loop 仓库>/mac && ./build-app.sh && ln -sf "$PWD/bin/loop" ~/.local/bin/loop`；用户此时不在电脑前就改走手机端 |
+| 69 或 `command not found` | 没装 Loop | 已有 Loop.app 的，让用户打开一次，按提示安装；否则让用户构建：`cd <loop 仓库>/mac && ./build-app.sh && ln -sf "$PWD/bin/loop" ~/.local/bin/loop`；用户此时不在电脑前就改走手机端 |
 
 ## 2B. 手机端：创建网页审阅、发链接、等反馈
 

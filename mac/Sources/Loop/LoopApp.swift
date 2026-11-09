@@ -40,7 +40,7 @@ struct LoopApp: App {
                     ContentView(store: store)
                         .onAppear { delegate.store = store }
                 } else {
-                    HistoryHomeView()
+                    HomeGate()
                 }
             }
             .tint(Color(Theme.vermilion))
