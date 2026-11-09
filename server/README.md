@@ -21,7 +21,7 @@ npm start
 | `LOOP_AGENT_TOKEN` | 必填 | Agent 创建方案和读取反馈的 Bearer；不发送给浏览器 |
 | `LOOP_DATA_DIR` | `./data` | 方案和反馈目录，相对进程工作目录 |
 | `LOOP_WEB_DIST` | `../web/dist` | Web 构建目录，相对进程工作目录 |
-| `LOOP_PUBLIC_URL` | `http://<HOST>:<PORT>` | 对外 origin，例如 `https://loop.weallwitness.com`；用于 reviewUrl 和浏览器 Origin 校验，生产部署必须设置 |
+| `LOOP_PUBLIC_URL` | `http://<HOST>:<PORT>` | 对外 origin，例如 `https://loop.example.com`；用于 reviewUrl 和浏览器 Origin 校验，生产部署必须设置 |
 | `LOOP_WEBHOOKS_FILE` | `<data dir>/../webhooks.json` | Agent 名称到 Webhook 的映射 |
 
 复制 `webhooks.example.json` 到配置路径并设置权限 `0600`。每个 Agent 对应 `{ "url": "https://agent.example/feedback", "bearer": "..." }`；键 `"*"` 为默认项，未匹配的 Agent 名称投递到它；空 URL 或无映射跳过转发，反馈仍可轮询。URL 只能来自此服务端配置，支持 HTTPS，以及本机调试用 localhost/127.0.0.1/[::1] HTTP。拒绝 URL 用户信息、片段和跳转。配置在每次投递时重新读取。密钥不要放在 URL 中。
@@ -60,7 +60,7 @@ LOOP_AGENT_TOKEN=<a-long-random-token>
 LOOP_DATA_DIR=/var/lib/loop
 LOOP_WEB_DIST=/opt/loop/web/dist
 LOOP_WEBHOOKS_FILE=/etc/loop/webhooks.json
-LOOP_PUBLIC_URL=https://loop.weallwitness.com
+LOOP_PUBLIC_URL=https://loop.example.com
 ```
 
 `/etc/systemd/system/loop.service`（确认 Node 22+ 的实际路径）：
@@ -98,14 +98,14 @@ limit_req_zone $binary_remote_addr zone=loop_writes:10m rate=30r/m;
 
 server {
     listen 80;
-    server_name loop.weallwitness.com;
+    server_name loop.example.com;
     return 301 https://$host$request_uri;
 }
 server {
     listen 443 ssl;
-    server_name loop.weallwitness.com;
-    ssl_certificate /etc/letsencrypt/live/loop.weallwitness.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/loop.weallwitness.com/privkey.pem;
+    server_name loop.example.com;
+    ssl_certificate /etc/letsencrypt/live/loop.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/loop.example.com/privkey.pem;
     client_max_body_size 1m;
     # 避免默认日志保存 review 链接；如需日志，应使用不含查询参数的格式。
     access_log off;
@@ -125,7 +125,7 @@ server {
 }
 ```
 
-静态 HTML 也经过 Node，才能注入 `window.LOOP_HOSTED=true`。不要用 nginx 直接绕过 index.html 注入。执行 `systemctl daemon-reload && systemctl enable --now loop`、`nginx -t && systemctl reload nginx`，检查 `https://loop.weallwitness.com/api/health`。更新时重新构建 web/dist 并 `systemctl restart loop`，沿用数据目录与凭证；只向外开放80/443。
+静态 HTML 也经过 Node，才能注入 `window.LOOP_HOSTED=true`。不要用 nginx 直接绕过 index.html 注入。执行 `systemctl daemon-reload && systemctl enable --now loop`、`nginx -t && systemctl reload nginx`，检查 `https://loop.example.com/api/health`。更新时重新构建 web/dist 并 `systemctl restart loop`，沿用数据目录与凭证；只向外开放80/443。
 
 ## 验证
 

@@ -6,13 +6,12 @@
 //   node web-review.mjs wait <reviewId> [--timeout 秒]
 //       → exit 0 with the feedback on stdout; exit 2 if nothing was submitted before the timeout
 //
-// Token: $LOOP_AGENT_TOKEN, else ~/.config/loop/agent-token. Server: $LOOP_URL, else https://loop.weallwitness.com.
+// Token: $LOOP_AGENT_TOKEN, else ~/.config/loop/agent-token. Server: $LOOP_URL, else ~/.config/loop/url.
 import {readFileSync} from 'node:fs';
 import {homedir} from 'node:os';
 import {basename, join} from 'node:path';
 import {setTimeout as sleep} from 'node:timers/promises';
 
-const server = (process.env.LOOP_URL || 'https://loop.weallwitness.com').replace(/\/$/, '');
 const [command, target, ...rest] = process.argv.slice(2);
 const options = {};
 for (let i = 0; i < rest.length; i += 2) {
@@ -31,7 +30,15 @@ function token() {
   catch { fail('找不到 Agent Token：设置 LOOP_AGENT_TOKEN，或写入 ~/.config/loop/agent-token', 69); }
 }
 
+function serverUrl() {
+  let url = process.env.LOOP_URL?.trim();
+  if (!url) try { url = readFileSync(join(homedir(), '.config/loop/url'), 'utf8').trim(); } catch {}
+  if (!url) fail('找不到 Loop 服务地址：设置 LOOP_URL，或写入 ~/.config/loop/url', 69);
+  return url.replace(/\/$/, '');
+}
+
 async function api(method, path, body) {
+  const server = serverUrl();
   let response;
   try {
     response = await fetch(server + path, {

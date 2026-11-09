@@ -14,9 +14,10 @@ stdio MCP server：把现有的网页审阅脚本和本机 `loop` CLI 暴露成�
 ## 运行
 
 ```sh
-# 网页工具需要 Agent Token
+# 网页工具需要服务地址和 Agent Token
+export LOOP_URL=https://loop.example.com
 export LOOP_AGENT_TOKEN=…
-# 可选：LOOP_URL、LOOP_BIN（默认 loop）
+# 可选：LOOP_BIN（默认 loop）
 
 node mcp/server.mjs
 ```
@@ -30,6 +31,7 @@ Claude Desktop / Cursor 配置示例：
       "command": "node",
       "args": ["/绝对路径/loop/mcp/server.mjs"],
       "env": {
+        "LOOP_URL": "https://loop.example.com",
         "LOOP_AGENT_TOKEN": "你的 token"
       }
     }

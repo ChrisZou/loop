@@ -86,7 +86,7 @@ loop wait <id> --timeout 540
 ```sh
 # 创建审阅：--agent 写你自己的名字（如 Claude Code、Codex），下一版加 --parent <上一版 reviewId>
 node <skill 目录>/scripts/web-review.mjs create 方案.md --agent "Claude Code"
-# → {"reviewId":"…","revision":1,"reviewUrl":"https://loop.weallwitness.com/?review=…"}
+# → {"reviewId":"…","revision":1,"reviewUrl":"https://loop.example.com/?review=…"}
 
 # 等反馈：最多等 --timeout 秒（默认 540）
 node <skill 目录>/scripts/web-review.mjs wait <reviewId> --timeout 540
@@ -103,7 +103,7 @@ node <skill 目录>/scripts/web-review.mjs wait <reviewId> --timeout 540
 | 0 | 用户提交了，标准输出是反馈 | 见第 3 步 |
 | 2 | 到点了还没提交 | 再调 `wait` |
 | 64 / 66 | 用法错误 / 方案读不到、为空或超过 30000 字 | 修正后重试 |
-| 69 | 没有 Agent Token | 请用户把托管服务的 `LOOP_AGENT_TOKEN` 写进 `~/.config/loop/agent-token`（权限 600），或设成环境变量 |
+| 69 | 没有 Agent Token 或服务地址 | 请用户把托管服务的 `LOOP_AGENT_TOKEN` 写进 `~/.config/loop/agent-token`（权限 600）、服务地址写进 `~/.config/loop/url`，或设成环境变量 `LOOP_AGENT_TOKEN`、`LOOP_URL` |
 | 1 | 网络或服务端错误（stderr 有原因） | 把原因告诉用户 |
 
 网页版至少要有一条批注、改一处待办勾选或写总体意见才能提交，所以用户认可时通常是总体意见里写「可以」「没问题」之类，按意思判断；只提交了勾选也算有反馈。

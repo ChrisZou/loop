@@ -12,7 +12,7 @@ swift build -c release
 ln -sf "$PWD/bin/loop" ~/.local/bin/loop   # 一次性安装，~/.local/bin 需在 PATH 中
 ```
 
-`build-app.sh` 生成 `build/Loop.app`，Bundle ID 为 `com.chris.loop`，使用团队 `W4SX57U6XB` 的 Developer ID Application 证书签名，找不到证书时退回 ad-hoc 签名。此构建未公证。
+`build-app.sh` 生成 `build/Loop.app`，Bundle ID 为 `com.chris.loop`，默认使用钥匙串里第一张 Developer ID Application 证书签名，可用 `LOOP_SIGNING_IDENTITY` 指定，找不到证书时退回 ad-hoc 签名。此构建未公证。
 
 ## 发起审阅
 

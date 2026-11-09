@@ -29,11 +29,12 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
-SIGNING_IDENTITY="Developer ID Application: Hangzhou Xinyouduzhong Technology Co., Ltd. (W4SX57U6XB)"
-if security find-identity -v -p codesigning | grep -Fq "\"$SIGNING_IDENTITY\""; then
+# LOOP_SIGNING_IDENTITY picks a certificate; otherwise use the first Developer ID in the keychain.
+SIGNING_IDENTITY="${LOOP_SIGNING_IDENTITY:-$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application: .*\)"$/\1/p' | head -n 1)}"
+if [ -n "$SIGNING_IDENTITY" ]; then
     codesign --force --deep -s "$SIGNING_IDENTITY" "$APP"
 else
-    echo "Signing identity not found, falling back to ad-hoc signing" >&2
+    echo "No Developer ID certificate found, falling back to ad-hoc signing" >&2
     codesign --force --deep -s - "$APP"
 fi
 echo "Built $APP"
