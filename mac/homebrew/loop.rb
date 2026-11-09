@@ -4,7 +4,7 @@
 #   3) replace sha256 below and bump version
 cask "loop-review" do
   version "1.0.0"
-  sha256 "7d107235a82eab148ee365443f0eb61bd2b1f71255965b4a9763de3f33719c77"
+  sha256 "cc0cc98323707cadd2c0891d9df02aa25476c5c52efd5019852190f17c0c600e"
 
   url "https://github.com/ChrisZou/loop/releases/download/v#{version}/Loop-#{version}-macos.zip"
   name "Loop"

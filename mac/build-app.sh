@@ -38,7 +38,8 @@ cp -R ../skills/loop-review "$APP/Contents/Resources/skills/"
 # LOOP_SIGNING_IDENTITY picks a certificate; otherwise use the first Developer ID in the keychain.
 SIGNING_IDENTITY="${LOOP_SIGNING_IDENTITY:-$(security find-identity -v -p codesigning | awk -F'"' '$2 ~ /^Developer ID Application: / && !found { print $2; found = 1 }')}"
 if [ -n "$SIGNING_IDENTITY" ]; then
-    codesign --force --deep -s "$SIGNING_IDENTITY" "$APP"
+    # Hardened runtime: Apple refuses to notarize without it.
+    codesign --force --deep --options runtime -s "$SIGNING_IDENTITY" "$APP"
 else
     echo "No Developer ID certificate found, falling back to ad-hoc signing" >&2
     codesign --force --deep -s - "$APP"
