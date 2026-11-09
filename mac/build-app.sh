@@ -18,6 +18,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleName</key><string>Loop</string>
     <key>CFBundleDisplayName</key><string>Loop</string>
     <key>CFBundleExecutable</key><string>Loop</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>1.0.0</string>
     <key>CFBundleVersion</key><string>1</string>
@@ -29,6 +30,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # The CLI and skill the app installs. These must be in place before signing seals the bundle.
 cp bin/loop "$APP/Contents/Resources/loop"
 chmod +x "$APP/Contents/Resources/loop"
