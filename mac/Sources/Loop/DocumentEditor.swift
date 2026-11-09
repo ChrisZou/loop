@@ -21,6 +21,8 @@ final class PlanTextView: NSTextView {
     var highlights: [Highlight] = [] { didSet { if highlights != oldValue { needsDisplay = true } } }
     /// Horizontal padding between the sheet's edge and the text column.
     var sheetPadding = Theme.sheetPadding
+    /// False when something else provides the paper.
+    var drawsSheet = true
     /// The plan's markdown. The text view's own string differs where tables swap pipes for paragraph breaks.
     var source: NSString?
     var taskBoxes: [TaskBox] = [] { didSet { if taskBoxes != oldValue { needsDisplay = true } } }
@@ -101,7 +103,7 @@ final class PlanTextView: NSTextView {
         super.drawBackground(in: rect)
         guard let storage = textStorage, let manager = layoutManager, let container = textContainer else { return }
         let origin = textContainerOrigin
-        drawSheet(in: rect, origin: origin, width: container.size.width)
+        if drawsSheet { drawSheet(in: rect, origin: origin, width: container.size.width) }
         storage.enumerateAttribute(.loopBlock, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
             guard let kind = (value as? String).flatMap(MarkdownStyler.Block.init) else { return }
             var used = NSRect.null

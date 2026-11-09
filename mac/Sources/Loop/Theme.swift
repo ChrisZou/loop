@@ -45,6 +45,11 @@ enum Theme {
         return NSFont(descriptor: descriptor, size: size) ?? base
     }
 
+    /// Songti alone, for text that is mostly Chinese: the serif cascade above widens full-width punctuation by half an em.
+    static func song(_ size: CGFloat, bold: Bool = false) -> NSFont {
+        NSFont(name: bold ? "STSongti-SC-Bold" : "STSongti-SC-Regular", size: size) ?? serif(size, weight: bold ? .bold : .regular)
+    }
+
     private static func dynamic(light: UInt32, dark: UInt32) -> NSColor {
         NSColor(name: nil) { appearance in color(isDark(appearance) ? dark : light) }
     }
@@ -65,15 +70,18 @@ extension Color {
 
 /// The dark ink button used for 提交 and 保存.
 struct InkButtonStyle: ButtonStyle {
+    var height: CGFloat = 30
+    var fontSize: CGFloat = 13
+    var radius: CGFloat = 7
     @Environment(\.isEnabled) private var enabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 13, weight: .semibold))
+            .font(.system(size: fontSize, weight: .semibold))
             .foregroundStyle(Color(Theme.onPrimary))
             .padding(.horizontal, 14)
-            .frame(height: 30)
-            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color(Theme.primary)))
+            .frame(height: height)
+            .background(RoundedRectangle(cornerRadius: radius, style: .continuous).fill(Color(Theme.primary)))
             .opacity(enabled ? (configuration.isPressed ? 0.82 : 1) : 0.4)
             .contentShape(Rectangle())
     }

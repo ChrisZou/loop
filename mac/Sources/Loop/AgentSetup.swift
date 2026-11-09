@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-struct SetupStep: Identifiable, Equatable {
+struct SetupStep: Equatable {
     enum Kind: Equatable {
         case cli
         case path(profile: URL)
@@ -10,9 +10,7 @@ struct SetupStep: Identifiable, Equatable {
 
     let kind: Kind
     let title: String
-    let detail: String
     var done: Bool
-    var id: String { title }
 }
 
 enum SetupError: LocalizedError {
@@ -84,15 +82,20 @@ struct AgentSetup {
     }
 
     func steps(pathProfile: URL?) -> [SetupStep] {
-        var steps = [SetupStep(kind: .cli, title: "命令行工具", detail: display(cliLink), done: cliInstalled)]
+        var steps = [SetupStep(kind: .cli, title: "命令行工具", done: cliInstalled)]
         if let pathProfile {
-            steps.append(SetupStep(kind: .path(profile: pathProfile), title: "PATH", detail: display(pathProfile), done: false))
+            steps.append(SetupStep(kind: .path(profile: pathProfile), title: "PATH", done: false))
         }
         steps += skillTargets.map { target in
-            SetupStep(kind: .skill(directory: target.locations[0]), title: target.title, detail: display(target.locations[0]),
+            SetupStep(kind: .skill(directory: target.locations[0]), title: target.title,
                       done: target.locations.contains { fm.fileExists(atPath: $0.appendingPathComponent("SKILL.md").path) })
         }
         return steps
+    }
+
+    /// A `loop` a package manager installed is on PATH already; only one in `~/.local/bin` may not be.
+    var usesLocalBin: Bool {
+        !systemBins.contains { isLoopCLI($0.appendingPathComponent("loop")) }
     }
 
     /// The file to edit so a login shell finds `~/.local/bin`; nil when it already does.
@@ -188,11 +191,10 @@ struct AgentSetup {
     }
 }
 
-/// Runs the setup off the main thread and publishes each step as it completes.
+/// Runs the setup off the main thread.
 final class SetupModel: ObservableObject {
-    @Published private(set) var steps: [SetupStep]
-    @Published private(set) var ready = false
     @Published private(set) var installing = false
+    @Published private(set) var done = false
     @Published private(set) var error: String?
     @Published private(set) var finished: Bool
 
@@ -200,50 +202,33 @@ final class SetupModel: ObservableObject {
 
     init(setup: AgentSetup = .current) {
         self.setup = setup
-        let steps = setup.steps(pathProfile: nil)
-        self.steps = steps
-        finished = !setup.isBundled || steps.allSatisfy(\.done)
-    }
-
-    /// Asking the login shell for PATH can take a second, so it only happens once the setup page is showing.
-    func prepare() {
-        guard !finished, !ready else { return }
-        if setup.cliInstalled { ready = true; return }
-        let setup = setup
-        DispatchQueue.global(qos: .userInitiated).async {
-            let profile = setup.profileNeeded(loginPath: setup.loginPath())
-            DispatchQueue.main.async {
-                self.steps = setup.steps(pathProfile: profile)
-                self.ready = true
-            }
-        }
+        finished = !setup.isBundled || setup.steps(pathProfile: nil).allSatisfy(\.done)
     }
 
     func install() {
-        guard ready, !installing else { return }
+        guard !installing, !done else { return }
         installing = true
         error = nil
         let setup = setup
-        let pending = steps.filter { !$0.done }
         DispatchQueue.global(qos: .userInitiated).async {
-            for step in pending {
-                do {
-                    try setup.perform(step)
-                } catch {
-                    DispatchQueue.main.async {
-                        self.error = error.localizedDescription
-                        self.installing = false
-                    }
-                    return
-                }
+            do {
+                // Asking the login shell for PATH can take a second, so it waits until there's something to install.
+                let profile = setup.usesLocalBin ? setup.profileNeeded(loginPath: setup.loginPath()) : nil
+                for step in setup.steps(pathProfile: profile) where !step.done { try setup.perform(step) }
+            } catch {
                 DispatchQueue.main.async {
-                    if let index = self.steps.firstIndex(where: { $0.id == step.id }) { self.steps[index].done = true }
+                    self.error = error.localizedDescription
+                    self.installing = false
                 }
+                return
             }
-            // Long enough to see the last tick land before the page goes.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
-                self.installing = false
-                self.finished = true
+            DispatchQueue.main.async {
+                self.done = true
+                // Long enough to see the tick land before the page goes.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+                    self.installing = false
+                    self.finished = true
+                }
             }
         }
     }

@@ -72,6 +72,7 @@ enum LoopMain {
             return
         }
         let env = ProcessInfo.processInfo.environment
+        if let root = env["LOOP_HISTORY_ROOT"] { HistoryStore.shared = HistoryStore(root: URL(fileURLWithPath: root)) }
         if env["LOOP_DEMO"] == "1" {
             let store = SessionStore(review: Demo.review, restoring: Demo.session)
             store.preview = env["LOOP_DEMO_PREVIEW"] == "1"

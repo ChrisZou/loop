@@ -684,6 +684,34 @@ enum SelfTest {
             check(fm.fileExists(atPath: workBuddySkill.path), "WorkBuddy skill installs into ~/.workbuddy/skills")
         } catch { check(false, "agent setup: \(error)") }
 
+        do {
+            let plan = "# 标题\n\n第一句。\n\n第二句。\n\n- [ ] 待办"
+            let comments = [Comment(location: (plan as NSString).range(of: "第一句。").location, length: 4, quote: "第一句。", body: "改短\n再改短", images: ["/tmp/a.png"])]
+            let exported = FeedbackExporter.export(text: plan, comments: comments, generals: [GeneralNote(text: "收紧范围\n\n先做一半")], checks: [("待办", true)])
+            let notes = FeedbackNotes(exported)
+            check(notes.marks == [.init(quote: "第一句。", body: "改短\n再改短", images: ["/tmp/a.png"])], "feedback marks read back with quote, body and images")
+            check(notes.closing == "收紧范围\n\n先做一半" && notes.plain == nil, "a closing note keeps its blank lines")
+            check(notes.checks.count == 1 && notes.checks[0].text == "待办" && notes.checks[0].checked, "task changes read back")
+            let several = FeedbackExporter.export(text: plan, comments: [], generals: [GeneralNote(text: "甲"), GeneralNote(text: "乙")])
+            check(FeedbackNotes(several).closing == "1. 甲\n\n2. 乙".replacingOccurrences(of: "\n\n", with: "\n"), "several closing notes stay a numbered list")
+            check(FeedbackNotes(ReviewRequest.approval).approved, "approval is recognised")
+            let foreign = FeedbackNotes("1. 随手写的\n2. 不是这个格式")
+            check(foreign.plain != nil && foreign.marks.isEmpty, "unknown text is kept as it is")
+            check(!FeedbackNotes("  ").hasRemarks, "blank feedback has no remarks")
+
+            var entry = HistoryEntry(title: "标题", agentName: "A", channel: .mac, document: plan, feedback: "", submittedAt: "2026-11-02T06:30:00Z")
+            check(entry.documentBody.hasPrefix("第一句"), "the heading shown as title is not repeated")
+            entry.title = "别的"
+            check(entry.documentBody == plan, "a different heading stays in the plan")
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+            let day = HistoryStore.parseDate("2026-11-02T06:30:00Z")!
+            check(entry.dayLabel(now: day, calendar: calendar) == "今天", "today")
+            check(entry.dayLabel(now: day.addingTimeInterval(86_400), calendar: calendar) == "昨天", "yesterday")
+            check(entry.dayLabel(now: day.addingTimeInterval(86_400 * 40), calendar: calendar).hasSuffix("月2日"), "this year's date")
+            check(entry.dayLabel(now: day.addingTimeInterval(86_400 * 400), calendar: calendar).hasPrefix("2026年"), "another year's date")
+        }
+
         print(output)
         print("\nSELFTEST PASSED (\(checks) checks)")
     }

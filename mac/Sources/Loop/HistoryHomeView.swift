@@ -19,21 +19,39 @@ final class HistoryBrowser: ObservableObject {
         if let current, entries.contains(where: { $0.id == current }) { return current }
         return entries.first?.id
     }
+
+    /// Entries under the day they were submitted, newest first.
+    var days: [(label: String, entries: [HistoryEntry])] {
+        entries.reduce(into: []) { days, entry in
+            let label = entry.dayLabel()
+            if days.last?.label == label { days[days.count - 1].entries.append(entry) } else { days.append((label, [entry])) }
+        }
+    }
 }
 
+/// An index down the desk on the left and the selected review as one sheet on the right; the selected row is the
+/// sheet's own tab, so the list and the paper read as a single object.
 struct HistoryHomeView: View {
     @StateObject private var browser = HistoryBrowser()
     @State private var selection: HistoryEntry.ID?
+    @Namespace private var tab
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private let sidebarWidth: CGFloat = 300
+    private let indexWidth: CGFloat = 276
 
     var body: some View {
         HStack(spacing: 0) {
-            sidebar
-                .frame(width: sidebarWidth)
-            detail
+            index
+                .frame(width: indexWidth)
+                .zIndex(1)
+            sheet
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(
+                    Color(Theme.sheet)
+                        .shadow(color: Color.black.opacity(0.07), radius: 14, x: -2, y: 0)
+                )
         }
+        .ignoresSafeArea()
         .background(Color(Theme.ground).ignoresSafeArea())
         .frame(minWidth: 720, minHeight: 480)
         .onAppear {
@@ -42,157 +60,107 @@ struct HistoryHomeView: View {
         }
     }
 
-    @ViewBuilder private var sidebar: some View {
-        if browser.entries.isEmpty {
-            Color(Theme.ground)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            ScrollView {
-                LazyVStack(spacing: 2) {
-                    ForEach(browser.entries) { entry in
-                        HistoryRow(
-                            entry: entry,
-                            isSelected: selection == entry.id,
-                            onSelect: { selection = entry.id }
-                        )
+    private var index: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(browser.days, id: \.label) { day in
+                    Text(day.label)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(Color(Theme.secondary))
+                        .padding(.leading, 26)
+                        .padding(.top, 20)
+                        .padding(.bottom, 8)
+                    ForEach(day.entries) { entry in
+                        IndexRow(entry: entry, isSelected: selection == entry.id, tab: tab) {
+                            withAnimation(reduceMotion ? nil : .spring(duration: 0.3, bounce: 0)) { selection = entry.id }
+                        }
                     }
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 10)
             }
-            .background(Color(Theme.sheet))
-            .overlay(alignment: .trailing) {
-                Rectangle()
-                    .fill(Color(Theme.rule))
-                    .frame(width: 1)
-            }
+            .padding(.top, 34)
+            .padding(.bottom, 24)
         }
+        .scrollIndicators(.never)
     }
 
-    @ViewBuilder private var detail: some View {
+    @ViewBuilder private var sheet: some View {
         if let entry = browser.entries.first(where: { $0.id == selection }) {
-            HistoryDetailView(entry: entry)
+            HistoryPaper(entry: entry).id(entry.id)
         } else {
-            // Empty history, or list present but nothing selected: pure ground, no copy.
-            Color(Theme.ground)
+            LoopMark()
+                .stroke(Color(Theme.vermilion).opacity(0.22), style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+                .frame(width: 72, height: 72)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityHidden(true)
         }
     }
 }
 
-private struct HistoryRow: View {
+private struct IndexRow: View {
     let entry: HistoryEntry
     let isSelected: Bool
+    let tab: Namespace.ID
     let onSelect: () -> Void
 
     @State private var hovering = false
 
     var body: some View {
         Button(action: onSelect) {
-            HStack(spacing: 0) {
-                RoundedRectangle(cornerRadius: 1, style: .continuous)
-                    .fill(isSelected ? Color(Theme.vermilion) : Color.clear)
-                    .frame(width: 2.5)
-                    .padding(.vertical, 4)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(entry.title)
-                        .font(.system(size: 13.5, weight: .semibold))
-                        .foregroundStyle(Color(Theme.ink))
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                    Text("\(entry.agentName) · \(entry.channel.label)")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Color(Theme.secondary))
-                        .lineLimit(1)
-                }
-                .padding(.leading, 11)
-                .padding(.trailing, 12)
-                .padding(.vertical, 10)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(entry.title)
+                    .font(Font(Theme.song(15)))
+                    .foregroundStyle(Color(isSelected ? Theme.heading : Theme.ink))
+                    .lineLimit(2)
+                    .lineSpacing(2)
+                    .multilineTextAlignment(.leading)
+                Text("\(entry.agentName) · \(entry.channel.label)")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Color(Theme.secondary))
+                    .lineLimit(1)
             }
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(rowFill)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .padding(.leading, 16)
+            .padding(.trailing, 22)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background { background }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .padding(.leading, 10)
         .onHover { hovering = $0 }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityLabel("\(entry.title)，\(entry.agentName)，\(entry.channel.label)")
     }
 
-    private var rowFill: Color {
-        if isSelected { return Color(Theme.selection) }
-        if hovering { return Color(Theme.rule) }
-        return Color.clear
+    @ViewBuilder private var background: some View {
+        if isSelected {
+            IndexTab(radius: 10)
+                .fill(Color(Theme.sheet))
+                .padding(.vertical, -10)
+                .matchedGeometryEffect(id: "tab", in: tab)
+        } else if hovering {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(Theme.sheet).opacity(0.5))
+                .padding(.trailing, 10)
+        }
     }
 }
 
-private struct HistoryDetailView: View {
-    let entry: HistoryEntry
+/// A file tab: rounded towards the desk, flaring into the sheet it belongs to. `rect` includes `radius` of room
+/// above and below the row for the two flares.
+private struct IndexTab: Shape {
+    let radius: CGFloat
 
-    private let contentWidth: CGFloat = 680
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                header
-                Color.clear.frame(height: 24)
-                paperStack(label: "方案", body: entry.document)
-                if hasFeedback {
-                    Color.clear.frame(height: 18)
-                    paperStack(label: "反馈", body: entry.feedback)
-                }
-            }
-            .frame(maxWidth: contentWidth, alignment: .leading)
-            .padding(.horizontal, 36)
-            .padding(.top, 28)
-            .padding(.bottom, 32)
-            .frame(maxWidth: .infinity, alignment: .center)
-        }
-        .background(Color(Theme.ground))
-    }
-
-    private var hasFeedback: Bool {
-        !entry.feedback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(entry.title)
-                .font(Font(Theme.serif(24)))
-                .foregroundStyle(Color(Theme.heading))
-            Text("\(entry.agentName) · \(entry.channel.label)")
-                .font(.system(size: 12.5))
-                .foregroundStyle(Color(Theme.secondary))
-        }
-    }
-
-    private func paperStack(label: String, body: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(label)
-                .font(Font(Theme.serif(13)))
-                .foregroundStyle(Color(Theme.vermilion))
-                .tracking(1.5)
-            Text(body)
-                .font(.system(size: 14))
-                .lineSpacing(6)
-                .foregroundStyle(Color(Theme.ink))
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(30)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color(Theme.sheet))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(Color(Theme.rule), lineWidth: 1)
-                        )
-                        .shadow(color: Color.black.opacity(0.04), radius: 6, x: 0, y: 2)
-                )
-        }
+    func path(in rect: CGRect) -> Path {
+        let top = rect.minY + radius, bottom = rect.maxY - radius
+        var path = Path()
+        path.move(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addArc(tangent1End: CGPoint(x: rect.maxX, y: top), tangent2End: CGPoint(x: rect.maxX - radius, y: top), radius: radius)
+        path.addArc(tangent1End: CGPoint(x: rect.minX, y: top), tangent2End: CGPoint(x: rect.minX, y: bottom), radius: radius)
+        path.addArc(tangent1End: CGPoint(x: rect.minX, y: bottom), tangent2End: CGPoint(x: rect.maxX, y: bottom), radius: radius)
+        path.addArc(tangent1End: CGPoint(x: rect.maxX, y: bottom), tangent2End: CGPoint(x: rect.maxX, y: rect.maxY), radius: radius)
+        path.closeSubpath()
+        return path
     }
 }
