@@ -69,12 +69,17 @@ struct AgentSetup {
     }
 
     /// One skill per agent present on this Mac; Claude Code when none is yet.
-    private var skillTargets: [(title: String, directory: URL)] {
-        let agents = [("Claude Code Skill", ".claude"), ("Codex Skill", ".codex")]
-            .map { (title: $0.0, root: home.appendingPathComponent($0.1)) }
-        let present = agents.filter { fm.fileExists(atPath: $0.root.path) }
-        return (present.isEmpty ? [agents[0]] : present).map {
-            (title: $0.title, directory: $0.root.appendingPathComponent("skills/loop-review"))
+    private var skillTargets: [(title: String, locations: [URL])] {
+        // The first location is where to install; any of them counts as installed.
+        let agents: [(title: String, root: String, locations: [String])] = [
+            ("Claude Code Skill", ".claude", [".claude/skills/loop-review"]),
+            // Codex documents ~/.agents/skills and still reads the older ~/.codex/skills.
+            ("Codex Skill", ".codex", [".agents/skills/loop-review", ".codex/skills/loop-review"]),
+            ("WorkBuddy Skill", ".workbuddy", [".workbuddy/skills/loop-review"]),
+        ]
+        let present = agents.filter { fm.fileExists(atPath: home.appendingPathComponent($0.root).path) }
+        return (present.isEmpty ? [agents[0]] : present).map { agent in
+            (title: agent.title, locations: agent.locations.map { home.appendingPathComponent($0) })
         }
     }
 
@@ -84,8 +89,8 @@ struct AgentSetup {
             steps.append(SetupStep(kind: .path(profile: pathProfile), title: "PATH", detail: display(pathProfile), done: false))
         }
         steps += skillTargets.map { target in
-            SetupStep(kind: .skill(directory: target.directory), title: target.title, detail: display(target.directory),
-                      done: fm.fileExists(atPath: target.directory.appendingPathComponent("SKILL.md").path))
+            SetupStep(kind: .skill(directory: target.locations[0]), title: target.title, detail: display(target.locations[0]),
+                      done: target.locations.contains { fm.fileExists(atPath: $0.appendingPathComponent("SKILL.md").path) })
         }
         return steps
     }

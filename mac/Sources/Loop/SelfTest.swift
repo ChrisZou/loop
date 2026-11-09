@@ -665,6 +665,23 @@ enum SelfTest {
             var translocationRefused = false
             do { try translocated.perform(steps[0]) } catch SetupError.translocated { translocationRefused = true }
             check(translocationRefused, "refuses to link into a translocated app")
+
+            check((try? fm.destinationOfSymbolicLink(atPath: home.appendingPathComponent(".agents/skills/loop-review").path)) != nil,
+                  "Codex skill installs into ~/.agents/skills")
+            check(!fm.fileExists(atPath: home.appendingPathComponent(".codex/skills/loop-review").path), "nothing added to the older ~/.codex/skills")
+
+            let agentsHome = root.appendingPathComponent("home3")
+            let agentsSetup = AgentSetup(home: agentsHome, resources: resources, bundlePath: "", shell: shell.path, systemBins: [])
+            try fm.createDirectory(at: agentsHome.appendingPathComponent(".workbuddy"), withIntermediateDirectories: true)
+            let legacyCodex = agentsHome.appendingPathComponent(".codex/skills/loop-review")
+            try fm.createDirectory(at: legacyCodex, withIntermediateDirectories: true)
+            try "skill".write(to: legacyCodex.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+            let agentSteps = agentsSetup.steps(pathProfile: nil)
+            check(agentSteps.map(\.title) == ["命令行工具", "Codex Skill", "WorkBuddy Skill"], "only agents on this Mac get a skill step")
+            check(agentSteps[1].done, "a skill in ~/.codex/skills counts as installed")
+            try agentsSetup.perform(agentSteps[2])
+            let workBuddySkill = agentsHome.appendingPathComponent(".workbuddy/skills/loop-review/SKILL.md")
+            check(fm.fileExists(atPath: workBuddySkill.path), "WorkBuddy skill installs into ~/.workbuddy/skills")
         } catch { check(false, "agent setup: \(error)") }
 
         print(output)

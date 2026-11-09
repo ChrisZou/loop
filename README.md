@@ -9,7 +9,7 @@
 | [`server/`](server/README.md) | Node.js 22+ 托管服务 | Agent 鉴权创建不可变方案，公开链接审阅，反馈落盘、Webhook 投递与鉴权轮询 |
 | [`protocol/`](protocol/README.md) | 文档 + JSON Schema | Web 版提交反馈的格式（Webhook v1） |
 | [`mcp/`](mcp/README.md) | stdio MCP server | 把网页审阅与本机 `loop review --detach` / `wait` 暴露成四个工具（`loop_web_*` / `loop_mac_*`），供 Claude Desktop / Cursor 配置 |
-| [`skills/loop-review/`](skills/loop-review/SKILL.md) | Agent Skill（SKILL.md） | 教 AI 代理怎么用 Loop：先判断用户在 Mac 前还是手机上，Mac 端发起 `loop review`，手机端用 `scripts/web-review.mjs` 在托管服务上建审阅、发链接、轮询反馈（Token 读 `LOOP_AGENT_TOKEN` 或 `~/.config/loop/agent-token`，服务地址读 `LOOP_URL` 或 `~/.config/loop/url`）；读退出码和反馈格式，改完再审直到认可。软链到 `~/.claude/skills/`、`~/.codex/skills/` 等目录即可启用 |
+| [`skills/loop-review/`](skills/loop-review/SKILL.md) | Agent Skill（SKILL.md） | 教 AI 代理怎么用 Loop：先判断用户在 Mac 前还是手机上，Mac 端发起 `loop review`，手机端用 `scripts/web-review.mjs` 在托管服务上建审阅、发链接、轮询反馈（Token 读 `LOOP_AGENT_TOKEN` 或 `~/.config/loop/agent-token`，服务地址读 `LOOP_URL` 或 `~/.config/loop/url`）；读退出码和反馈格式，改完再审直到认可。打开 Loop.app 按提示安装，或软链到 `~/.claude/skills/`、`~/.agents/skills/` 等目录即可启用 |
 | [`examples/`](examples/) | Node 脚本 | 本地示例收件器 `receiver.mjs` 和收件箱读取器 `watch-inbox.mjs`，用来本机联调 Web 版提交；测试在 `tests/` |
 
 两端互相独立，不共享数据。构建、运行和限制见各自的 README。
